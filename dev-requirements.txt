@@ -1,5 +1,5 @@
 # Development dependencies — linting, formatting, type checking, testing
-black>=24.0
+black>=26.5.1
 flake8>=7.0
 mypy>=1.8
 pytest>=8.3
