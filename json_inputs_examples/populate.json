@@ -1,0 +1,44 @@
+{
+    "WORKFLOW": "POPULATE",
+    "ACCOUNT_ID": "123456789012",
+    "ACCOUNT_NAME": "bluearch",
+    "REGION_NAME": [
+        "ap-northeast-1",
+        "ap-northeast-2",
+        "ap-northeast-3",
+        "ap-south-1",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "ca-central-1",
+        "eu-central-1",
+        "eu-north-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-west-3",
+        "sa-east-1",
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2"
+    ],
+    "RESOURCE_ACTIONS": [
+        "EC2",
+        "RDS",
+        "ELBV2",
+        "IAM",
+        "Elasticache",
+        "COST-OPTIMIZATION-HUB",
+        "SERVICE-QUOTAS",
+        "COMPUTE-OPTIMIZER"
+    ],
+    "TELEMETRY_CONFIG": {
+        "data_collected": {
+            "cli_version": true,
+            "command_used": true,
+            "execution_time": true,
+            "execution_status": true,
+            "error_reason": true,
+            "recommendations_count": true
+        }
+    }
+}

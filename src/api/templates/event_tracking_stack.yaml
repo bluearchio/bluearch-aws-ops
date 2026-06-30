@@ -1,0 +1,411 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'BlueArch CLI - Event Tracking Infrastructure (per account-region)'
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: 'AWS account ID of the management account running BlueArch'
+    AllowedPattern: '^\d{12}$'
+
+  AppVersion:
+    Type: String
+    Default: '__TEMPLATE_VERSION__'
+    Description: 'BlueArch CLI version that deployed this stack'
+
+Metadata:
+  BlueArchCLI:
+    Version: !Ref AppVersion
+    Component: 'event-tracking'
+    Purpose: 'Real-time resource change tracking via CloudTrail events'
+
+Resources:
+
+  # =========================================================================
+  # SQS Queue - receives CloudTrail events from EventBridge
+  # =========================================================================
+
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BlueArch-Events
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 345600   # 4 days
+      ReceiveMessageWaitTimeSeconds: 5  # Long polling
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "event-queue"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+        - Key: "bluearch:version"
+          Value: !Ref AppVersion
+
+  EventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BlueArch-Events-DLQ
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "event-queue-dlq"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  EventQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EventQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgeSend
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/BlueArch-*'
+          - Sid: AllowManagementAccountPoll
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${ManagementAccountId}:root'
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:GetQueueUrl
+            Resource: !GetAtt EventQueue.Arn
+
+  # =========================================================================
+  # EventBridge Rules - one per AWS service, targeting SQS directly
+  # =========================================================================
+
+  EC2EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-EC2Events
+      Description: 'Track EC2 resource lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - RunInstances
+            - TerminateInstances
+            - CreateVolume
+            - DeleteVolume
+            - CreateSnapshot
+            - DeleteSnapshot
+            - RegisterImage
+            - DeregisterImage
+            - AllocateAddress
+            - ReleaseAddress
+            - CreateTags
+            - DeleteTags
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  S3EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-S3Events
+      Description: 'Track S3 bucket lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateBucket
+            - DeleteBucket
+            - PutBucketTagging
+            - DeleteBucketTagging
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  LambdaEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-LambdaEvents
+      Description: 'Track Lambda function lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.lambda
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateFunction20150331
+            - DeleteFunction20150331
+            - TagResource20170331v2
+            - UntagResource20170331v2
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  RDSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-RDSEvents
+      Description: 'Track RDS instance/cluster lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.rds
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateDBInstance
+            - DeleteDBInstance
+            - CreateDBCluster
+            - DeleteDBCluster
+            - AddTagsToResource
+            - RemoveTagsFromResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  DynamoDBEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-DynamoDBEvents
+      Description: 'Track DynamoDB table lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.dynamodb
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateTable
+            - DeleteTable
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ECSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ECSEvents
+      Description: 'Track ECS cluster/service lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.ecs
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCluster
+            - DeleteCluster
+            - CreateService
+            - DeleteService
+            - RegisterTaskDefinition
+            - DeregisterTaskDefinition
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ELBEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ELBEvents
+      Description: 'Track ELB/ALB lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.elasticloadbalancing
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateLoadBalancer
+            - DeleteLoadBalancer
+            - CreateTargetGroup
+            - DeleteTargetGroup
+            - AddTags
+            - RemoveTags
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  SNSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-SNSEvents
+      Description: 'Track SNS topic lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sns
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateTopic
+            - DeleteTopic
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  SQSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-SQSEvents
+      Description: 'Track SQS queue lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sqs
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateQueue
+            - DeleteQueue
+            - TagQueue
+            - UntagQueue
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  CloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-CloudWatchEvents
+      Description: 'Track CloudWatch alarm lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.monitoring
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - PutMetricAlarm
+            - DeleteAlarms
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  EKSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-EKSEvents
+      Description: 'Track EKS cluster/nodegroup lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.eks
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCluster
+            - DeleteCluster
+            - CreateNodegroup
+            - DeleteNodegroup
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ElastiCacheEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ElastiCacheEvents
+      Description: 'Track ElastiCache cluster lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.elasticache
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCacheCluster
+            - DeleteCacheCluster
+            - CreateReplicationGroup
+            - DeleteReplicationGroup
+            - AddTagsToResource
+            - RemoveTagsFromResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+Outputs:
+  QueueUrl:
+    Description: 'URL of the SQS event queue'
+    Value: !Ref EventQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueUrl'
+
+  QueueArn:
+    Description: 'ARN of the SQS event queue'
+    Value: !GetAtt EventQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueArn'
+
+  DLQUrl:
+    Description: 'URL of the dead-letter queue'
+    Value: !Ref EventDLQ
+
+  DLQArn:
+    Description: 'ARN of the dead-letter queue'
+    Value: !GetAtt EventDLQ.Arn
+
+  RuleCount:
+    Description: 'Number of EventBridge rules deployed'
+    Value: '12'

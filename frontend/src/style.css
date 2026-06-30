@@ -1,0 +1,98 @@
+/* BlueArch Design System — matches tag-manager-cli frontend */
+
+@font-face {
+  font-family: 'Audiowide';
+  src: url('@/assets/fonts/Audiowide-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Alata';
+  src: url('@/assets/fonts/Alata-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ShareTechMono';
+  src: url('@/assets/fonts/ShareTechMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  /* Layout */
+  --sidebar-width: 240px;
+  --topbar-height: 56px;
+
+  /* Surfaces */
+  --surface-ground: #0a0a0a;
+  --surface-card: #141414;
+  --surface-card-hover: #1a1a1a;
+  --surface-border: #262626;
+  --surface-input: #0f0f0f;
+
+  /* Text */
+  --text-color: #f0f0f0;
+  --text-color-secondary: #a0a0a0;
+
+  /* Brand */
+  --primary-color: #206CF5;
+  --primary-hover: #116DFE;
+  --accent-cyan: #19D4D4;
+
+  /* Semantic */
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-danger: #ef4444;
+
+  /* Gradients */
+  --gradient-brand: linear-gradient(135deg, #206CF5, #19D4D4);
+  --gradient-brand-horizontal: linear-gradient(92.87deg, #206CF5 14.71%, #19D5D5 87.94%);
+  --gradient-border: linear-gradient(to right, #206CF5, #19D4D4);
+
+  /* Glow */
+  --glow-blue: 0 0 20px rgba(32, 108, 245, 0.15);
+  --glow-blue-strong: 0 0 30px rgba(32, 108, 245, 0.3);
+
+  /* Typography */
+  --font-heading: 'Audiowide', sans-serif;
+  --font-body: 'Alata', 'Inter', system-ui, sans-serif;
+  --font-mono: 'ShareTechMono', 'SF Mono', 'Fira Code', monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--surface-ground);
+  color: var(--text-color);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(32, 108, 245, 0.3);
+  color: #fff;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface-ground); }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #444; }
+
+code, pre, .mono { font-family: var(--font-mono); }
+
+/* Gradient text utility */
+.text-gradient {
+  background: var(--gradient-brand-horizontal);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

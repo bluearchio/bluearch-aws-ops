@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'BlueArch CLI - CUR Infrastructure for FinOps'
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: 'S3 bucket name for CUR data'
+
+  ReportName:
+    Type: String
+    Default: 'bluearch-cur'
+    Description: 'CUR report name'
+
+  AppVersion:
+    Type: String
+    Default: '__TEMPLATE_VERSION__'
+    Description: 'BlueArch CLI version that deployed this stack'
+
+Metadata:
+  BlueArchCLI:
+    Version: !Ref AppVersion
+    Component: 'cost-reports'
+
+Resources:
+
+  # =========================================================================
+  # S3 Bucket - stores CUR data with encryption and lifecycle rules
+  # =========================================================================
+
+  CURBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: 'bluearch:managed-by'
+          Value: 'bluearch-cli'
+        - Key: 'bluearch:component'
+          Value: 'cost-reports'
+        - Key: 'bluearch:version'
+          Value: !Ref AppVersion
+
+  # =========================================================================
+  # Bucket Policy - allows CUR service to deliver reports
+  # =========================================================================
+
+  CURBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CURBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCURDelivery
+            Effect: Allow
+            Principal:
+              Service: billingreports.amazonaws.com
+            Action:
+              - s3:GetBucketAcl
+              - s3:GetBucketPolicy
+            Resource: !GetAtt CURBucket.Arn
+          - Sid: AllowCURWrite
+            Effect: Allow
+            Principal:
+              Service: billingreports.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CURBucket.Arn}/*'
+
+  # =========================================================================
+  # CUR Report Definition
+  # =========================================================================
+
+  CURReport:
+    Type: AWS::CUR::ReportDefinition
+    DependsOn: CURBucketPolicy
+    Properties:
+      ReportName: !Ref ReportName
+      TimeUnit: HOURLY
+      Format: Parquet
+      Compression: Parquet
+      S3Bucket: !Ref CURBucket
+      S3Prefix: !Ref ReportName
+      S3Region: us-east-1
+      AdditionalSchemaElements:
+        - RESOURCES
+        - SPLIT_COST_ALLOCATION_DATA
+      RefreshClosedReports: true
+      ReportVersioning: OVERWRITE_REPORT
+
+  # =========================================================================
+  # Glue Database - Athena catalog for CUR queries
+  # =========================================================================
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseInput:
+        Name: !Sub 'athenacurcfn_${ReportName}'
+        Description: 'Database for Cost and Usage Report data'
+
+  # =========================================================================
+  # Glue Crawler IAM Role
+  # =========================================================================
+
+  GlueCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'BlueArchCURCrawlerRole-${AWS::Region}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: CURBucketAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt CURBucket.Arn
+                  - !Sub '${CURBucket.Arn}/*'
+      Tags:
+        - Key: 'bluearch:managed-by'
+          Value: 'bluearch-cli'
+        - Key: 'bluearch:component'
+          Value: 'cost-reports'
+        - Key: 'bluearch:version'
+          Value: !Ref AppVersion
+
+  # =========================================================================
+  # Glue Crawler - discovers CUR data schema on a daily schedule
+  # =========================================================================
+
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: bluearch-cur-crawler
+      Role: !GetAtt GlueCrawlerRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub 's3://${CURBucket}/${CURReport}/${CURReport}'
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: DELETE_FROM_DATABASE
+      Schedule:
+        ScheduleExpression: 'cron(0 1 * * ? *)'
+      Tags:
+        "bluearch:managed-by": "bluearch-cli"
+        "bluearch:component": "cost-reports"
+
+# =========================================================================
+# Stack-level tags
+# =========================================================================
+
+Tags:
+  - Key: 'bluearch:product'
+    Value: 'bluearch'
+  - Key: 'bluearch:component'
+    Value: 'cost-reports'
+  - Key: 'bluearch:managed-by'
+    Value: 'bluearch-cli'
+  - Key: 'bluearch:version'
+    Value: !Ref AppVersion
+
+Outputs:
+  CURBucketName:
+    Description: 'S3 bucket for CUR data'
+    Value: !Ref CURBucket
+
+  GlueDatabaseName:
+    Description: 'Glue database for CUR'
+    Value: !Ref GlueDatabase
+
+  CrawlerName:
+    Description: 'Glue crawler for CUR'
+    Value: !Ref GlueCrawler

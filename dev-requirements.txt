@@ -1,0 +1,9 @@
+# Development dependencies — linting, formatting, type checking, testing
+black>=24.0
+flake8>=7.0
+mypy>=1.8
+pytest>=8.3
+pytest-asyncio>=0.24
+pytest-cov>=6.0
+pytest-mock>=3.14
+httpx>=0.28

@@ -1,0 +1,27 @@
+{
+    "WORKFLOW": "REMEDIATE",
+    "ACCOUNT_ID": "123456789012",
+    "REGION_NAME": {
+        "ap-southeast-3": {
+            "previous_gen_ec2_volumes": [
+                {
+                    "resource_id": "vol-0935940129ffbd14e",
+                    "VolumeType": "io1",
+                    "ActionRationale": "Previous Gen",
+                    "BluearchAction": "UPGRADE_VOLUME_TYPE",
+                    "HourlyCost": 0.020766666666666662
+                }
+            ]
+        }
+    },
+    "TELEMETRY_CONFIG": {
+        "data_collected": {
+            "cli_version": true,
+            "command_used": true,
+            "execution_time": true,
+            "execution_status": true,
+            "error_reason": true,
+            "recommendations_count": true
+        }
+    }
+}

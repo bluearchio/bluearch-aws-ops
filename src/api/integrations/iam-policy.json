@@ -1,0 +1,1060 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "STSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "sts:AssumeRole"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "STSAssumeRoleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sts:AssumeRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/TagManagerRole",
+        "arn:aws:iam::*:role/OrganizationAccountAccessRole",
+        "arn:aws:iam::*:role/BlueArchRole",
+        "arn:aws:iam::*:role/BlueArchCLIRole"
+      ]
+    },
+    {
+      "Sid": "AccountReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "account:GetAlternateContact"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFormationReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStackSet",
+        "cloudformation:ListStackSets",
+        "cloudformation:ListStackInstances",
+        "cloudformation:DescribeStackSetOperation",
+        "cloudformation:ListStackSetOperations",
+        "cloudformation:ListStackSetOperationResults",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:ListStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DeleteChangeSet"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFormationWriteAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStackSet",
+        "cloudformation:UpdateStackSet",
+        "cloudformation:DeleteStackSet",
+        "cloudformation:CreateStackInstances",
+        "cloudformation:UpdateStackInstances",
+        "cloudformation:DeleteStackInstances",
+        "cloudformation:StopStackSetOperation",
+        "cloudformation:ActivateOrganizationsAccess"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:*:stackset/TagManagerCLI-*:*",
+        "arn:aws:cloudformation:*:*:stackset/BlueArchCLI-*:*",
+        "arn:aws:cloudformation:*:*:stackset/BlueArch-*:*"
+      ]
+    },
+    {
+      "Sid": "CloudFormationStackAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DeleteChangeSet"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:*:stack/TagManagerCLI-*/*",
+        "arn:aws:cloudformation:*:*:stack/TagManagerCUR/*",
+        "arn:aws:cloudformation:*:*:stack/BlueArchCLI-*/*",
+        "arn:aws:cloudformation:*:*:stack/BlueArch-*/*"
+      ]
+    },
+    {
+      "Sid": "SecretsManagerAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:RestoreSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:PutSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:tag-manager-cli/*",
+        "arn:aws:secretsmanager:*:*:secret:tag-manager-slack-*",
+        "arn:aws:secretsmanager:*:*:secret:bluearch-cli/*",
+        "arn:aws:secretsmanager:*:*:secret:bluearch-*",
+        "arn:aws:secretsmanager:*:*:secret:bluearch-slack-*",
+        "arn:aws:secretsmanager:*:*:secret:bluearch-alerting-engine-*"
+      ]
+    },
+    {
+      "Sid": "SecretsManagerListAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:ListSecrets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2ReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeImages",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeRegions",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeFlowLogs",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeNatGateways",
+        "ec2:DescribeVpcEndpoints",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeLaunchTemplates",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeManagedPrefixLists",
+        "ec2:DescribeReservedInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2TaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2LifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:DeleteVolume",
+        "ec2:DeleteSnapshot",
+        "ec2:StopInstances",
+        "ec2:ModifyVolume",
+        "ec2:ReleaseAddress"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "S3Access",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation",
+        "s3:GetBucketAcl",
+        "s3:GetBucketTagging",
+        "s3:PutBucketTagging",
+        "s3:PutObjectTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketEncryption",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketLogging",
+        "s3:GetObjectLockConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetBucketPolicyStatus",
+        "s3:GetBucketPolicy",
+        "s3:DeleteObjectTagging"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EFSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "elasticfilesystem:DescribeFileSystems",
+        "elasticfilesystem:DescribeMountTargets",
+        "elasticfilesystem:DescribeLifecycleConfiguration",
+        "elasticfilesystem:DescribeReplicationConfigurations",
+        "elasticfilesystem:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Route53ReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "route53:ListHostedZones",
+        "route53:ListResourceRecordSets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListFunctions",
+        "lambda:ListTags",
+        "lambda:ListLayers",
+        "lambda:ListLayerVersions",
+        "lambda:GetFunction"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaTaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:DeleteFunction"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "IAMReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListUsers",
+        "iam:ListAccessKeys",
+        "iam:SimulatePrincipalPolicy",
+        "iam:GetAccountSummary",
+        "iam:GetAccountPasswordPolicy",
+        "iam:GetUser",
+        "iam:GetRole",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListPolicies",
+        "iam:ListPolicyVersions",
+        "iam:ListEntitiesForPolicy",
+        "iam:ListInstanceProfilesForRole",
+        "iam:ListRoles",
+        "iam:GetAccessKeyLastUsed",
+        "iam:ListMFADevices",
+        "iam:GenerateCredentialReport",
+        "iam:GetCredentialReport",
+        "iam:GetLoginProfile",
+        "iam:ListGroups",
+        "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMRoleManagementAccess",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:UpdateRole",
+        "iam:DeleteRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListEntitiesForPolicy",
+        "iam:CreatePolicyVersion",
+        "iam:SetDefaultPolicyVersion",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:PassRole",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/TagManager*",
+        "arn:aws:iam::*:policy/TagManagerCLI-*",
+        "arn:aws:iam::*:role/BlueArch*",
+        "arn:aws:iam::*:policy/BlueArchCLI-*",
+        "arn:aws:iam::*:policy/BlueArch-*"
+      ]
+    },
+    {
+      "Sid": "RDSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBClusters",
+        "rds:DescribeDBSnapshots",
+        "rds:DescribeDBClusterSnapshots",
+        "rds:ListTagsForResource",
+        "rds:DescribeDBSubnetGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RedshiftReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "redshift:DescribeClusters"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RDSTaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "rds:AddTagsToResource",
+        "rds:RemoveTagsFromResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RDSLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DeleteDBInstance",
+        "rds:DeleteDBCluster",
+        "rds:ModifyDBInstance"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ECSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:ListClusters",
+        "ecs:DescribeClusters",
+        "ecs:ListServices",
+        "ecs:DescribeServices",
+        "ecs:ListTasks",
+        "ecs:DescribeTasks",
+        "ecs:ListTaskDefinitions",
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListTagsForResource",
+        "ecs:TagResource",
+        "ecs:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ELBAccess",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DescribeTags",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:RemoveTags",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeListenerCertificates",
+        "elasticloadbalancing:DescribeRules"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EKSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "eks:ListClusters",
+        "eks:DescribeCluster",
+        "eks:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "GuardDutyReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "guardduty:ListDetectors",
+        "guardduty:GetDetector"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ACMReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "acm:ListCertificates",
+        "acm:DescribeCertificate",
+        "acm:ListTagsForCertificate"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFrontReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:ListDistributions",
+        "cloudfront:GetDistribution",
+        "cloudfront:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "WAFReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "wafv2:GetWebACLForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "InspectorReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "inspector2:ListFindings"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SecurityHubReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "securityhub:DescribeHub",
+        "securityhub:ListFindingAggregators"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ElastiCacheReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:DescribeCacheClusters",
+        "elasticache:ListTagsForResource",
+        "elasticache:DescribeReplicationGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SNSListTagAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sns:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostExplorerAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ce:GetCostAndUsage",
+        "ce:GetCostForecast",
+        "ce:GetDimensionValues",
+        "ce:GetTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CURReportAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cur:DescribeReportDefinitions",
+        "cur:PutReportDefinition",
+        "cur:DeleteReportDefinition",
+        "cur:ModifyReportDefinition"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AthenaQueryAccess",
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:StopQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:GetWorkGroup",
+        "athena:ListWorkGroups",
+        "athena:ListDataCatalogs",
+        "athena:ListDatabases",
+        "athena:ListTableMetadata",
+        "athena:GetTableMetadata"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "GlueCatalogAccess",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:GetPartitions",
+        "glue:BatchGetPartition",
+        "glue:CreateDatabase",
+        "glue:CreateTable",
+        "glue:UpdateTable",
+        "glue:CreateCrawler",
+        "glue:StartCrawler",
+        "glue:GetCrawler"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3CURBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::*cur*",
+        "arn:aws:s3:::*cur*/*",
+        "arn:aws:s3:::*cost*",
+        "arn:aws:s3:::*cost*/*",
+        "arn:aws:s3:::aws-athena-query-results-*",
+        "arn:aws:s3:::aws-athena-query-results-*/*"
+      ]
+    },
+    {
+      "Sid": "S3BlueArchArtifactBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bluearch-*",
+        "arn:aws:s3:::bluearch-*/*"
+      ]
+    },
+    {
+      "Sid": "ResourceGroupsTaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "tag:GetResources",
+        "tag:TagResources",
+        "tag:GetComplianceSummary",
+        "tag:UntagResources",
+        "tag:GetTagKeys",
+        "tag:GetTagValues"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OrganizationsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "organizations:DescribeOrganization",
+        "organizations:DescribeAccount",
+        "organizations:ListRoots",
+        "organizations:ListPolicies",
+        "organizations:DescribePolicy",
+        "organizations:ListTargetsForPolicy",
+        "organizations:ListOrganizationalUnitsForParent",
+        "organizations:ListAccounts",
+        "organizations:ListAccountsForParent",
+        "organizations:ListParents",
+        "organizations:DescribeEffectivePolicy",
+        "organizations:CreatePolicy",
+        "organizations:UpdatePolicy",
+        "organizations:DeletePolicy",
+        "organizations:AttachPolicy",
+        "organizations:DetachPolicy",
+        "organizations:EnablePolicyType",
+        "organizations:DisablePolicyType",
+        "organizations:EnableAWSServiceAccess",
+        "organizations:ListDelegatedAdministrators",
+        "organizations:ListAWSServiceAccessForOrganization",
+        "organizations:RegisterDelegatedAdministrator",
+        "organizations:DeregisterDelegatedAdministrator",
+        "organizations:DisableAWSServiceAccess"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:ListFoundationModels",
+        "bedrock:ListFoundationModelAgreementOffers",
+        "bedrock:CreateFoundationModelAgreement",
+        "bedrock:PutUseCaseForModelAccess",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:Converse",
+        "bedrock:ConverseStream",
+        "bedrock:ListInferenceProfiles"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DynamoDBReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:BatchGetItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTables",
+        "dynamodb:ListTagsOfResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KinesisReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:ListStreams",
+        "kinesis:DescribeStreamSummary",
+        "kinesis:ListTagsForStream"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DynamoDBWriteAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:CreateTable",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/tag-manager-*",
+        "arn:aws:dynamodb:*:*:table/bluearch*",
+        "arn:aws:dynamodb:*:*:table/BlueArch*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DeleteTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/tag-manager-*",
+        "arn:aws:dynamodb:*:*:table/bluearch*",
+        "arn:aws:dynamodb:*:*:table/BlueArch*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "SSMAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:DescribeAlarmsForMetric",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsWriteAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:EnableAlarmActions",
+        "cloudwatch:DisableAlarmActions",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "SNSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sns:ListTopics",
+        "sns:ListSubscriptionsByTopic",
+        "sns:GetTopicAttributes",
+        "sns:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SNSWriteAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:SetTopicAttributes",
+        "sns:TagResource",
+        "sns:Publish"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SNSLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sns:DeleteTopic"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "SQSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ListQueues",
+        "sqs:GetQueueUrl",
+        "sqs:GetQueueAttributes",
+        "sqs:ListQueueTags",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:SendMessage",
+        "sqs:PurgeQueue"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SQSTaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SQSLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:DeleteQueue",
+        "sqs:CreateQueue",
+        "sqs:SetQueueAttributes"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/ManagedBy": [
+            "tag-manager-cli",
+            "bluearch-cli"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchLogsReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:ListTagsForResource",
+        "logs:StartQuery",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:GetQueryResults",
+        "logs:StopQuery",
+        "logs:DescribeMetricFilters",
+        "logs:StartLiveTail"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsTaggingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsLifecycleAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DeleteLogGroup"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:*"
+    },
+    {
+      "Sid": "CloudTrailReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudtrail:LookupEvents",
+        "cloudtrail:GetTrailStatus",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:ListTrails",
+        "cloudtrail:Get*",
+        "cloudtrail:List*",
+        "cloudtrail:Describe*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ConfigReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "config:DescribeConfigRules",
+        "config:GetComplianceDetailsByConfigRule",
+        "config:DescribeComplianceByConfigRule",
+        "config:DescribeConfigurationRecorders",
+        "config:DescribeConfigurationRecorderStatus",
+        "config:Describe*",
+        "config:Get*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EventBridgeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "events:ListRules",
+        "events:DescribeRule",
+        "events:ListTargetsByRule",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:DeleteRule",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ComputeOptimizerCostHubAndQuotasAccess",
+      "Effect": "Allow",
+      "Action": [
+        "compute-optimizer:Get*",
+        "compute-optimizer:Describe*",
+        "compute-optimizer:UpdateEnrollmentStatus",
+        "cost-optimization-hub:Get*",
+        "cost-optimization-hub:List*",
+        "cost-optimization-hub:UpdateEnrollmentStatus",
+        "servicequotas:Get*",
+        "servicequotas:List*",
+        "pricing:Get*",
+        "pricing:Describe*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StepFunctionsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "states:StartExecution",
+        "states:DescribeExecution",
+        "states:ListExecutions",
+        "states:StopExecution"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "MarketplaceReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "aws-marketplace:DescribeEntity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KMSReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:ListAliases"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AdditionalResourceReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "elasticbeanstalk:DescribeEnvironments",
+        "elasticbeanstalk:DescribePlatformVersion",
+        "elasticmapreduce:DescribeCluster",
+        "elasticmapreduce:ListClusters",
+        "elasticmapreduce:ListInstanceFleets",
+        "elasticmapreduce:ListInstanceGroups",
+        "network-firewall:DescribeFirewall",
+        "network-firewall:DescribeFirewallPolicy",
+        "network-firewall:ListFirewalls",
+        "resource-explorer-2:ListIndexes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ResourceGroupsManagement",
+      "Effect": "Allow",
+      "Action": [
+        "resource-groups:CreateGroup",
+        "resource-groups:DeleteGroup",
+        "resource-groups:GetGroup",
+        "resource-groups:GetGroupQuery",
+        "resource-groups:ListGroupResources",
+        "resource-groups:UpdateGroup",
+        "resource-groups:UpdateGroupQuery",
+        "resource-groups:Tag",
+        "resource-groups:Untag"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProEC2Deployment",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:CreateInternetGateway",
+        "ec2:DeleteInternetGateway",
+        "ec2:AttachInternetGateway",
+        "ec2:DetachInternetGateway",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:AllocateAddress",
+        "ec2:ReleaseAddress",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeImages",
+        "ec2:DescribeManagedPrefixLists",
+        "ec2:ModifyVpcAttribute",
+        "cloudfront:CreateDistribution",
+        "cloudfront:GetDistribution",
+        "cloudfront:UpdateDistribution",
+        "cloudfront:DeleteDistribution",
+        "cloudfront:TagResource",
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:DeleteParameter",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:PassRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

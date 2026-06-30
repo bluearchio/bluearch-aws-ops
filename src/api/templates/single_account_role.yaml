@@ -1,0 +1,574 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'BlueArch CLI - Single Account Role (for assume-role authentication)'
+
+Parameters:
+  TrustedPrincipalMode:
+    Type: String
+    Description: 'Who can assume this role'
+    Default: 'AnyPrincipal'
+    AllowedValues:
+      - 'CurrentUser'
+      - 'AnyPrincipal'
+      - 'SpecificArn'
+    ConstraintDescription: 'Must be CurrentUser, AnyPrincipal, or SpecificArn'
+
+  SpecificPrincipalArn:
+    Type: String
+    Description: 'ARN of the IAM user/role allowed to assume this role (required if TrustedPrincipalMode is SpecificArn)'
+    Default: ''
+    AllowedPattern: '^(arn:aws:iam::[0-9]{12}:(user|role)/[a-zA-Z0-9+=,.@_/-]+)?$'
+    ConstraintDescription: 'Must be a valid IAM ARN or empty'
+
+  ExternalId:
+    Type: String
+    Description: 'External ID for additional security (optional)'
+    Default: ''
+    NoEcho: true
+
+  DeployingUserArn:
+    Type: String
+    Description: 'ARN of the user deploying this stack (auto-populated when using CurrentUser mode)'
+    Default: ''
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Trust Configuration"
+        Parameters:
+          - TrustedPrincipalMode
+          - SpecificPrincipalArn
+          - ExternalId
+    ParameterLabels:
+      TrustedPrincipalMode:
+        default: "Who can assume the BlueArchCLI role?"
+      SpecificPrincipalArn:
+        default: "Specific IAM ARN (if mode is SpecificArn)"
+      ExternalId:
+        default: "External ID (optional, for additional security)"
+  BlueArchCLI:
+    Version: '__TEMPLATE_VERSION__'
+    CLIVersion: '__CLI_VERSION__'
+    DeploymentDate: '__DEPLOYMENT_DATE__'
+    Purpose: 'Single account role for BlueArch CLI assume-role authentication'
+    ManagedBy: 'bluearch-cli'
+
+Conditions:
+  UseCurrentUser: !Equals [!Ref TrustedPrincipalMode, 'CurrentUser']
+  UseAnyPrincipal: !Equals [!Ref TrustedPrincipalMode, 'AnyPrincipal']
+  UseSpecificArn: !Equals [!Ref TrustedPrincipalMode, 'SpecificArn']
+  HasExternalId: !Not [!Equals [!Ref ExternalId, '']]
+  HasDeployingUserArn: !Not [!Equals [!Ref DeployingUserArn, '']]
+
+Resources:
+  BlueArchCLIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BlueArchCLIRole
+      Description: 'IAM role for BlueArch CLI with all required permissions'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowAssumeRole
+            Effect: Allow
+            Principal:
+              AWS: !If
+                - UseCurrentUser
+                - !If
+                  - HasDeployingUserArn
+                  - !Ref DeployingUserArn
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+                - !If
+                  - UseSpecificArn
+                  - !Ref SpecificPrincipalArn
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  'sts:ExternalId': !Ref ExternalId
+              - !Ref AWS::NoValue
+      ManagedPolicyArns:
+        - !Ref BlueArchCLIPolicyCoreAccess
+        - !Ref BlueArchCLIPolicyResourceAccess
+        - !Ref BlueArchCLIPolicyMonitoringAccess
+        - !Ref BlueArchCLIPolicyTaggingAccess
+      Tags:
+        - Key: Application
+          Value: BlueArchCLI
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: TrustMode
+          Value: !Ref TrustedPrincipalMode
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "assume-role"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  BlueArchCLIPolicyCoreAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-CoreAccess'
+      Description: 'Core permissions for BlueArch CLI'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: STSAccess
+            Effect: Allow
+            Action:
+              - 'sts:GetCallerIdentity'
+              - 'sts:AssumeRole'
+            Resource: '*'
+
+          - Sid: STSAssumeRoleAccess
+            Effect: Allow
+            Action:
+              - 'sts:AssumeRole'
+            Resource:
+              - 'arn:aws:iam::*:role/BlueArchRole'
+              - 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
+
+          - Sid: CloudFormationReadAccess
+            Effect: Allow
+            Action:
+              - 'cloudformation:DescribeStackSet'
+              - 'cloudformation:ListStackSets'
+              - 'cloudformation:ListStackInstances'
+              - 'cloudformation:DescribeStackSetOperation'
+              - 'cloudformation:ListStackSetOperations'
+              - 'cloudformation:ListStackSetOperationResults'
+              - 'cloudformation:DescribeStacks'
+              - 'cloudformation:DescribeStackEvents'
+              - 'cloudformation:ListStackResources'
+              - 'cloudformation:GetTemplate'
+            Resource: '*'
+
+          - Sid: CloudFormationWriteAccess
+            Effect: Allow
+            Action:
+              - 'cloudformation:CreateStackSet'
+              - 'cloudformation:UpdateStackSet'
+              - 'cloudformation:DeleteStackSet'
+              - 'cloudformation:CreateStackInstances'
+              - 'cloudformation:UpdateStackInstances'
+              - 'cloudformation:DeleteStackInstances'
+              - 'cloudformation:StopStackSetOperation'
+              - 'cloudformation:ActivateOrganizationsAccess'
+            Resource:
+              - 'arn:aws:cloudformation:*:*:stackset/BlueArchCLI-*:*'
+
+          - Sid: CloudFormationStackAccess
+            Effect: Allow
+            Action:
+              - 'cloudformation:CreateStack'
+              - 'cloudformation:UpdateStack'
+              - 'cloudformation:DeleteStack'
+            Resource:
+              - 'arn:aws:cloudformation:*:*:stack/BlueArchCLI-*/*'
+
+          - Sid: IAMReadAccess
+            Effect: Allow
+            Action:
+              - 'iam:ListUsers'
+              - 'iam:ListAccessKeys'
+              - 'iam:SimulatePrincipalPolicy'
+              - 'iam:GetUser'
+              - 'iam:GetRole'
+              - 'iam:GetPolicy'
+              - 'iam:ListRolePolicies'
+              - 'iam:ListAttachedRolePolicies'
+              - 'iam:ListPolicyVersions'
+              - 'iam:ListInstanceProfilesForRole'
+            Resource: '*'
+
+          - Sid: IAMRoleManagementAccess
+            Effect: Allow
+            Action:
+              - 'iam:CreateRole'
+              - 'iam:UpdateRole'
+              - 'iam:DeleteRole'
+              - 'iam:PutRolePolicy'
+              - 'iam:DeleteRolePolicy'
+              - 'iam:DeletePolicyVersion'
+              - 'iam:RemoveRoleFromInstanceProfile'
+              - 'iam:CreatePolicy'
+              - 'iam:DeletePolicy'
+              - 'iam:AttachRolePolicy'
+              - 'iam:DetachRolePolicy'
+              - 'iam:ListEntitiesForPolicy'
+            Resource:
+              - 'arn:aws:iam::*:role/BlueArch*'
+              - 'arn:aws:iam::*:policy/BlueArchCLI-*'
+
+          - Sid: OrganizationsAccess
+            Effect: Allow
+            Action:
+              - 'organizations:DescribeOrganization'
+              - 'organizations:DescribeAccount'
+              - 'organizations:ListRoots'
+              - 'organizations:ListOrganizationalUnitsForParent'
+              - 'organizations:ListAccounts'
+              - 'organizations:ListAccountsForParent'
+              - 'organizations:ListParents'
+              - 'organizations:ListDelegatedAdministrators'
+              - 'organizations:ListAWSServiceAccessForOrganization'
+              - 'organizations:RegisterDelegatedAdministrator'
+              - 'organizations:DeregisterDelegatedAdministrator'
+            Resource: '*'
+
+  # Policy 2: Resource Access (EC2, RDS, ELB, ElastiCache, EBS, IAM, Lambda, S3)
+  BlueArchCLIPolicyResourceAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-ResourceAccess'
+      Description: 'Resource read and remediation permissions for BlueArch CLI'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EC2ReadAccess
+            Effect: Allow
+            Action:
+              - 'ec2:DescribeInstances'
+              - 'ec2:DescribeVolumes'
+              - 'ec2:DescribeSnapshots'
+              - 'ec2:DescribeRegions'
+              - 'ec2:DescribeVpcs'
+              - 'ec2:DescribeSubnets'
+              - 'ec2:DescribeSecurityGroups'
+              - 'ec2:DescribeNetworkInterfaces'
+              - 'ec2:DescribeAddresses'
+              - 'ec2:DescribeImages'
+              - 'ec2:DescribeNatGateways'
+              - 'ec2:DescribeRouteTables'
+              - 'ec2:DescribeInternetGateways'
+              - 'ec2:DescribeKeyPairs'
+              - 'ec2:DescribeLaunchTemplates'
+            Resource: '*'
+
+          - Sid: EC2RemediationAccess
+            Effect: Allow
+            Action:
+              - 'ec2:TerminateInstances'
+              - 'ec2:StopInstances'
+              - 'ec2:ModifyVolume'
+              - 'ec2:DeleteVolume'
+              - 'ec2:DeleteSnapshot'
+              - 'ec2:ReleaseAddress'
+              - 'ec2:CreateTags'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'ec2:ResourceTag/ManagedBy': 'bluearch-cli'
+
+          - Sid: RDSReadAccess
+            Effect: Allow
+            Action:
+              - 'rds:DescribeDBInstances'
+              - 'rds:DescribeDBClusters'
+              - 'rds:DescribeDBSnapshots'
+              - 'rds:DescribeDBSubnetGroups'
+              - 'rds:ListTagsForResource'
+            Resource: '*'
+
+          - Sid: RDSRemediationAccess
+            Effect: Allow
+            Action:
+              - 'rds:ModifyDBInstance'
+              - 'rds:DeleteDBInstance'
+              - 'rds:DeleteDBCluster'
+              - 'rds:AddTagsToResource'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:ResourceTag/ManagedBy': 'bluearch-cli'
+
+          - Sid: ELBReadAccess
+            Effect: Allow
+            Action:
+              - 'elasticloadbalancing:DescribeLoadBalancers'
+              - 'elasticloadbalancing:DescribeTargetGroups'
+              - 'elasticloadbalancing:DescribeTargetHealth'
+              - 'elasticloadbalancing:DescribeListeners'
+              - 'elasticloadbalancing:DescribeTags'
+              - 'elasticloadbalancing:DescribeRules'
+            Resource: '*'
+
+          - Sid: ElastiCacheReadAccess
+            Effect: Allow
+            Action:
+              - 'elasticache:DescribeCacheClusters'
+              - 'elasticache:DescribeReplicationGroups'
+              - 'elasticache:ListTagsForResource'
+            Resource: '*'
+
+          - Sid: LambdaReadAccess
+            Effect: Allow
+            Action:
+              - 'lambda:ListFunctions'
+              - 'lambda:GetFunction'
+              - 'lambda:ListTags'
+            Resource: '*'
+
+          - Sid: S3ReadAccess
+            Effect: Allow
+            Action:
+              - 's3:ListAllMyBuckets'
+              - 's3:GetBucketLocation'
+              - 's3:GetBucketTagging'
+              - 's3:GetBucketEncryption'
+              - 's3:GetBucketVersioning'
+              - 's3:GetBucketPublicAccessBlock'
+              - 's3:GetBucketLogging'
+            Resource: '*'
+
+          - Sid: ECSReadAccess
+            Effect: Allow
+            Action:
+              - 'ecs:ListClusters'
+              - 'ecs:DescribeClusters'
+              - 'ecs:ListServices'
+              - 'ecs:DescribeServices'
+              - 'ecs:ListTasks'
+              - 'ecs:DescribeTasks'
+              - 'ecs:ListTagsForResource'
+            Resource: '*'
+
+          - Sid: DynamoDBReadAccess
+            Effect: Allow
+            Action:
+              - 'dynamodb:DescribeTable'
+              - 'dynamodb:ListTables'
+              - 'dynamodb:ListTagsOfResource'
+            Resource: '*'
+
+          - Sid: SQSReadAccess
+            Effect: Allow
+            Action:
+              - 'sqs:ListQueues'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:ListQueueTags'
+            Resource: '*'
+
+          - Sid: SNSReadAccess
+            Effect: Allow
+            Action:
+              - 'sns:ListTopics'
+              - 'sns:GetTopicAttributes'
+              - 'sns:ListSubscriptionsByTopic'
+              - 'sns:ListTagsForResource'
+            Resource: '*'
+
+          - Sid: SNSWriteAccess
+            Effect: Allow
+            Action:
+              - 'sns:CreateTopic'
+              - 'sns:Subscribe'
+              - 'sns:Unsubscribe'
+              - 'sns:SetTopicAttributes'
+              - 'sns:TagResource'
+              - 'sns:Publish'
+            Resource: '*'
+
+          - Sid: ResourceGroupsTaggingAccess
+            Effect: Allow
+            Action:
+              - 'tag:GetResources'
+              - 'tag:GetComplianceSummary'
+            Resource: '*'
+
+  # Policy 3: Monitoring and Alerting Access (CloudWatch, CloudTrail, Config, Cost Explorer)
+  BlueArchCLIPolicyMonitoringAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-MonitoringAccess'
+      Description: 'Monitoring and alerting permissions for BlueArch CLI'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudWatchReadAccess
+            Effect: Allow
+            Action:
+              - 'cloudwatch:DescribeAlarms'
+              - 'cloudwatch:DescribeAlarmsForMetric'
+              - 'cloudwatch:GetMetricStatistics'
+              - 'cloudwatch:GetMetricData'
+              - 'cloudwatch:ListMetrics'
+              - 'cloudwatch:ListTagsForResource'
+            Resource: '*'
+
+          - Sid: CloudWatchAlarmsWriteAccess
+            Effect: Allow
+            Action:
+              - 'cloudwatch:PutMetricAlarm'
+              - 'cloudwatch:EnableAlarmActions'
+              - 'cloudwatch:DisableAlarmActions'
+              - 'cloudwatch:DeleteAlarms'
+              - 'cloudwatch:TagResource'
+              - 'cloudwatch:UntagResource'
+            Resource: '*'
+
+          - Sid: CloudWatchLogsReadAccess
+            Effect: Allow
+            Action:
+              - 'logs:DescribeLogGroups'
+              - 'logs:ListTagsForResource'
+              - 'logs:StartQuery'
+              - 'logs:FilterLogEvents'
+              - 'logs:GetLogEvents'
+              - 'logs:DescribeLogStreams'
+              - 'logs:GetQueryResults'
+              - 'logs:StopQuery'
+            Resource: '*'
+
+          - Sid: CloudTrailReadAccess
+            Effect: Allow
+            Action:
+              - 'cloudtrail:LookupEvents'
+              - 'cloudtrail:GetTrailStatus'
+              - 'cloudtrail:DescribeTrails'
+              - 'cloudtrail:ListTrails'
+            Resource: '*'
+
+          - Sid: ConfigReadAccess
+            Effect: Allow
+            Action:
+              - 'config:DescribeConfigRules'
+              - 'config:GetComplianceDetailsByConfigRule'
+              - 'config:DescribeComplianceByConfigRule'
+              - 'config:DescribeConfigurationRecorders'
+              - 'config:DescribeConfigurationRecorderStatus'
+            Resource: '*'
+
+          - Sid: CostExplorerAccess
+            Effect: Allow
+            Action:
+              - 'ce:GetCostAndUsage'
+              - 'ce:GetCostForecast'
+              - 'ce:GetDimensionValues'
+              - 'ce:GetTags'
+            Resource: '*'
+
+          - Sid: SSMAccess
+            Effect: Allow
+            Action:
+              - 'ssm:GetParameter'
+            Resource: '*'
+
+          - Sid: EventBridgeReadAccess
+            Effect: Allow
+            Action:
+              - 'events:ListRules'
+              - 'events:DescribeRule'
+              - 'events:ListTargetsByRule'
+            Resource: '*'
+
+  # Policy 4: Tag Write + Lifecycle Access (Tag Manager CLI support)
+  BlueArchCLIPolicyTaggingAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-TaggingAccess'
+      Description: 'Tag write and lifecycle permissions for Tag Manager CLI support'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ResourceGroupsTaggingWrite
+            Effect: Allow
+            Action:
+              - 'tag:TagResources'
+              - 'tag:UntagResources'
+              - 'tag:GetResources'
+              - 'tag:GetTagKeys'
+              - 'tag:GetTagValues'
+            Resource: '*'
+
+          - Sid: ServiceSpecificTagWrites
+            Effect: Allow
+            Action:
+              - 'ec2:CreateTags'
+              - 'ec2:DeleteTags'
+              - 's3:PutBucketTagging'
+              - 's3:PutObjectTagging'
+              - 's3:DeleteObjectTagging'
+              - 'lambda:TagResource'
+              - 'lambda:UntagResource'
+              - 'rds:AddTagsToResource'
+              - 'rds:RemoveTagsFromResource'
+              - 'dynamodb:TagResource'
+              - 'dynamodb:UntagResource'
+              - 'ecs:TagResource'
+              - 'ecs:UntagResource'
+              - 'elasticache:AddTagsToResource'
+              - 'elasticache:RemoveTagsFromResource'
+              - 'elasticloadbalancing:AddTags'
+              - 'elasticloadbalancing:RemoveTags'
+              - 'sqs:TagQueue'
+              - 'sqs:UntagQueue'
+              - 'sns:TagResource'
+              - 'sns:UntagResource'
+              - 'logs:TagResource'
+              - 'logs:UntagResource'
+              - 'eks:TagResource'
+              - 'eks:UntagResource'
+              - 'iam:TagRole'
+              - 'iam:UntagRole'
+              - 'iam:TagUser'
+              - 'iam:UntagUser'
+              - 'iam:TagPolicy'
+              - 'iam:UntagPolicy'
+            Resource: '*'
+
+          - Sid: ComputeOptimizerAndCostHub
+            Effect: Allow
+            Action:
+              - 'compute-optimizer:Get*'
+              - 'compute-optimizer:Describe*'
+              - 'compute-optimizer:UpdateEnrollmentStatus'
+              - 'cost-optimization-hub:Get*'
+              - 'cost-optimization-hub:List*'
+              - 'cost-optimization-hub:UpdateEnrollmentStatus'
+              - 'servicequotas:Get*'
+              - 'servicequotas:List*'
+              - 'cur:Describe*'
+            Resource: '*'
+
+Tags:
+  - Key: "bluearch:product"
+    Value: "bluearch"
+  - Key: "bluearch:component"
+    Value: "assume-role"
+  - Key: "bluearch:managed-by"
+    Value: "bluearch-cli"
+
+Outputs:
+  RoleArn:
+    Description: 'ARN of the BlueArchCLI role'
+    Value: !GetAtt BlueArchCLIRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleArn'
+
+  RoleName:
+    Description: 'Name of the BlueArchCLI role'
+    Value: !Ref BlueArchCLIRole
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleName'
+
+  AccountId:
+    Description: 'AWS Account ID where the role is deployed'
+    Value: !Ref AWS::AccountId
+    Export:
+      Name: !Sub '${AWS::StackName}-AccountId'
+
+  TrustMode:
+    Description: 'Trust policy mode configured for this role'
+    Value: !Ref TrustedPrincipalMode
+    Export:
+      Name: !Sub '${AWS::StackName}-TrustMode'
+
+  ExternalIdConfigured:
+    Description: 'Whether an External ID is configured'
+    Value: !If [HasExternalId, 'Yes', 'No']
+    Export:
+      Name: !Sub '${AWS::StackName}-ExternalIdConfigured'

@@ -1,0 +1,52 @@
+[project]
+name = "bluearch-aws-ops"
+description = "BlueArch AWS Ops CLI and dashboard for recommendations, alerting, and remediation"
+requires-python = ">=3.10"
+
+# ---------------------------------------------------------------------------
+# Black — code formatting
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | dist
+  | build
+  | __pycache__
+  | \.eggs
+)/
+'''
+
+# ---------------------------------------------------------------------------
+# Flake8 — linting (via flake8 config, not natively in pyproject.toml)
+# ---------------------------------------------------------------------------
+# Flake8 doesn't support pyproject.toml natively. Use .flake8 file instead.
+
+# ---------------------------------------------------------------------------
+# Mypy — type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "venv",
+    "dist",
+    "build",
+    "tests",
+    "__pycache__",
+]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["src/api/tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

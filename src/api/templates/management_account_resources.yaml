@@ -1,0 +1,695 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS BlueArch CLI - Management Account Resources'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Configuration"
+        Parameters:
+          - ExternalId
+          - OrganizationId
+    ParameterLabels:
+      ExternalId:
+        default: "External ID for cross-account role assumption"
+      OrganizationId:
+        default: "AWS Organization ID"
+  BlueArchCLI:
+    Version: '__TEMPLATE_VERSION__'
+    CLIVersion: '__CLI_VERSION__'
+    DeploymentDate: '__DEPLOYMENT_DATE__'
+    Purpose: 'Management account resources for cross-account tagging'
+    ManagedBy: 'bluearch-cli'
+
+Parameters:
+  ExternalId:
+    Type: String
+    Description: 'Secure ExternalId for cross-account role assumption'
+    MinLength: 32
+    MaxLength: 64
+    NoEcho: true
+
+  OrganizationId:
+    Type: String
+    Description: 'AWS Organization ID'
+    AllowedPattern: '^o-[a-z0-9]{10,32}$'
+
+Resources:
+  BlueArchExternalIdSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'bluearch-cli/v2/external-id/${OrganizationId}'
+      Description: 'ExternalId for BlueArch CLI cross-account role assumption (CloudFormation managed)'
+      SecretString: !Sub |
+        {
+          "ExternalId": "${ExternalId}",
+          "OrganizationId": "${OrganizationId}",
+          "ManagementAccountId": "${AWS::AccountId}",
+          "CreatedBy": "bluearch-cli",
+          "StackName": "${AWS::StackName}"
+        }
+      Tags:
+        - Key: Application
+          Value: BlueArchCLI
+        - Key: Purpose
+          Value: CrossAccountSecurity
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "management-resources"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  BlueArchStateTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: bluearch-cross-account
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: alias/aws/dynamodb
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Application
+          Value: BlueArchCLI
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Purpose
+          Value: CrossAccountState
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "management-resources"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  BlueArchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BlueArchRole
+      Description: 'Cross-account role for AWS BlueArch CLI in management account'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowAssumeFromOrganization
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:PrincipalOrgID': !Ref OrganizationId
+                'sts:ExternalId': !Ref ExternalId
+      ManagedPolicyArns:
+        - !Ref BlueArchReadPolicy
+        - !Ref BlueArchTaggingPolicy
+        - !Ref BlueArchCostPolicy
+      Policies:
+        - PolicyName: AssumeRoleInOrganization
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AssumeBlueArchRoleInOtherAccounts
+                Effect: Allow
+                Action: 'sts:AssumeRole'
+                Resource: 'arn:aws:iam::*:role/BlueArchRole'
+                Condition:
+                  StringEquals:
+                    'sts:ExternalId': !Ref ExternalId
+      Tags:
+        - Key: Application
+          Value: BlueArchCLI
+        - Key: Environment
+          Value: Production
+        - Key: ManagedBy
+          Value: CloudFormation-ManagementAccount
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "management-resources"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  BlueArchReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-ReadPolicy'
+      Description: 'Read permissions for AWS resource discovery'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: UniversalReadAccess
+            Effect: Allow
+            Action:
+              # Core services
+              - 'ec2:Describe*'
+              - 'ec2:Get*'
+              - 's3:List*'
+              - 's3:Get*'
+              - 'lambda:List*'
+              - 'lambda:Get*'
+              - 'rds:Describe*'
+              - 'rds:List*'
+              - 'dynamodb:List*'
+              - 'dynamodb:Describe*'
+              - 'dynamodb:Get*'
+              # Supporting services
+              - 'cloudwatch:List*'
+              - 'cloudwatch:Get*'
+              - 'cloudwatch:Describe*'
+              - 'cloudtrail:LookupEvents'
+              - 'cloudtrail:Get*'
+              - 'cloudtrail:List*'
+              - 'cloudformation:List*'
+              - 'cloudformation:Describe*'
+              - 'iam:Get*'
+              - 'iam:List*'
+              - 'sts:GetCallerIdentity'
+              # Tagging and resource groups
+              - 'tag:Get*'
+              - 'tag:Describe*'
+              - 'resource-groups:Get*'
+              - 'resource-groups:List*'
+              - 'resource-groups:Search*'
+            Resource: '*'
+
+          - Sid: EventQueuePollAccess
+            Effect: Allow
+            Action:
+              - 'sqs:ReceiveMessage'
+              - 'sqs:DeleteMessage'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:GetQueueUrl'
+            Resource:
+              - !Sub 'arn:aws:sqs:*:${AWS::AccountId}:BlueArch-Events'
+              - !Sub 'arn:aws:sqs:*:${AWS::AccountId}:BlueArch-Events'
+
+  BlueArchTaggingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-TaggingPolicy'
+      Description: 'Permissions for tag management operations'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: UniversalTaggingAccess
+            Effect: Allow
+            Action:
+              # Universal tagging API
+              - 'tag:TagResources'
+              - 'tag:UntagResources'
+              - 'tag:GetResources'
+              - 'tag:GetTagKeys'
+              - 'tag:GetTagValues'
+              # Service-specific tagging
+              - 'ec2:CreateTags'
+              - 'ec2:DeleteTags'
+              - 's3:PutBucketTagging'
+              - 's3:PutObjectTagging'
+              - 's3:DeleteBucketTagging'
+              - 's3:DeleteObjectTagging'
+              - 'lambda:TagResource'
+              - 'lambda:UntagResource'
+              - 'rds:AddTagsToResource'
+              - 'rds:RemoveTagsFromResource'
+              - 'dynamodb:TagResource'
+              - 'dynamodb:UntagResource'
+            Resource: '*'
+
+  # Cost and billing analysis policy
+  BlueArchCostPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-CostPolicy'
+      Description: 'Permissions for cost analysis and reporting'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CostExplorerAccess
+            Effect: Allow
+            Action:
+              - 'ce:Get*'
+              - 'ce:Describe*'
+              - 'ce:List*'
+              - 'pricing:Get*'
+              - 'pricing:Describe*'
+              - 'budgets:View*'
+              - 'cur:Describe*'
+            Resource: '*'
+          - Sid: OrganizationBillingAccess
+            Effect: Allow
+            Action:
+              - 'organizations:ListAccounts'
+              - 'organizations:DescribeAccount'
+              - 'organizations:DescribeOrganization'
+              - 'organizations:DescribeOrganizationalUnit'
+              - 'organizations:ListRoots'
+              - 'organizations:ListOrganizationalUnitsForParent'
+              - 'organizations:ListAccountsForParent'
+            Resource: '*'
+
+  # =========================================================================
+  # Event Tracking - SQS Queue for CloudTrail events via EventBridge
+  # =========================================================================
+
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BlueArch-Events
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 5
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "event-queue"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  EventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: BlueArch-Events-DLQ
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: "bluearch:product"
+          Value: "bluearch"
+        - Key: "bluearch:component"
+          Value: "event-queue-dlq"
+        - Key: "bluearch:managed-by"
+          Value: "bluearch-cli"
+
+  EventQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EventQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgeSend
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/BlueArch-*'
+          - Sid: AllowManagementAccountPoll
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:GetQueueUrl
+            Resource: !GetAtt EventQueue.Arn
+
+  # =========================================================================
+  # EventBridge Rules - one per AWS service, targeting SQS directly
+  # =========================================================================
+
+  EC2EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-EC2Events
+      Description: 'Track EC2 resource lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - RunInstances
+            - TerminateInstances
+            - CreateVolume
+            - DeleteVolume
+            - CreateSnapshot
+            - DeleteSnapshot
+            - RegisterImage
+            - DeregisterImage
+            - AllocateAddress
+            - ReleaseAddress
+            - CreateTags
+            - DeleteTags
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  S3EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-S3Events
+      Description: 'Track S3 bucket lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateBucket
+            - DeleteBucket
+            - PutBucketTagging
+            - DeleteBucketTagging
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  LambdaEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-LambdaEvents
+      Description: 'Track Lambda function lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.lambda
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateFunction20150331
+            - DeleteFunction20150331
+            - TagResource20170331v2
+            - UntagResource20170331v2
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  RDSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-RDSEvents
+      Description: 'Track RDS instance/cluster lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.rds
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateDBInstance
+            - DeleteDBInstance
+            - CreateDBCluster
+            - DeleteDBCluster
+            - AddTagsToResource
+            - RemoveTagsFromResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  DynamoDBEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-DynamoDBEvents
+      Description: 'Track DynamoDB table lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.dynamodb
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateTable
+            - DeleteTable
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ECSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ECSEvents
+      Description: 'Track ECS cluster/service lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.ecs
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCluster
+            - DeleteCluster
+            - CreateService
+            - DeleteService
+            - RegisterTaskDefinition
+            - DeregisterTaskDefinition
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ELBEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ELBEvents
+      Description: 'Track ELB/ALB lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.elasticloadbalancing
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateLoadBalancer
+            - DeleteLoadBalancer
+            - CreateTargetGroup
+            - DeleteTargetGroup
+            - AddTags
+            - RemoveTags
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  SNSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-SNSEvents
+      Description: 'Track SNS topic lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sns
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateTopic
+            - DeleteTopic
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  SQSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-SQSEvents
+      Description: 'Track SQS queue lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.sqs
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateQueue
+            - DeleteQueue
+            - TagQueue
+            - UntagQueue
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  CloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-CloudWatchEvents
+      Description: 'Track CloudWatch alarm lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.monitoring
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - PutMetricAlarm
+            - DeleteAlarms
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  EKSEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-EKSEvents
+      Description: 'Track EKS cluster/nodegroup lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.eks
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCluster
+            - DeleteCluster
+            - CreateNodegroup
+            - DeleteNodegroup
+            - TagResource
+            - UntagResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+  ElastiCacheEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: BlueArch-ElastiCacheEvents
+      Description: 'Track ElastiCache cluster lifecycle and tag changes'
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.elasticache
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          errorCode:
+            - exists: false
+          eventName:
+            - CreateCacheCluster
+            - DeleteCacheCluster
+            - CreateReplicationGroup
+            - DeleteReplicationGroup
+            - AddTagsToResource
+            - RemoveTagsFromResource
+      Targets:
+        - Id: EventQueue
+          Arn: !GetAtt EventQueue.Arn
+
+Outputs:
+  ExternalIdSecretArn:
+    Description: 'ARN of the Secrets Manager secret containing ExternalId'
+    Value: !Ref BlueArchExternalIdSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-ExternalIdSecretArn'
+
+  ExternalIdSecretName:
+    Description: 'Name of the Secrets Manager secret'
+    Value: !Sub 'bluearch-cli/v2/external-id/${OrganizationId}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ExternalIdSecretName'
+
+  DynamoDBTableName:
+    Description: 'Name of the DynamoDB state table'
+    Value: !Ref BlueArchStateTable
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTableName'
+
+  DynamoDBTableArn:
+    Description: 'ARN of the DynamoDB state table'
+    Value: !GetAtt BlueArchStateTable.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTableArn'
+
+  StackName:
+    Description: 'Name of this CloudFormation stack'
+    Value: !Ref AWS::StackName
+
+  Region:
+    Description: 'Region where resources are deployed'
+    Value: !Ref AWS::Region
+
+  BlueArchRoleArn:
+    Description: 'ARN of the BlueArchRole in management account'
+    Value: !GetAtt BlueArchRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BlueArchRoleArn'
+
+  EventQueueUrl:
+    Description: 'URL of the SQS event tracking queue'
+    Value: !Ref EventQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-EventQueueUrl'
+
+  EventQueueArn:
+    Description: 'ARN of the SQS event tracking queue'
+    Value: !GetAtt EventQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EventQueueArn'

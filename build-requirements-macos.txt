@@ -1,0 +1,4 @@
+nuitka>=2.0
+ordered-set>=4.1.0   # Nuitka dependency
+zstandard>=0.21.0    # Nuitka compression support
+wheel>=0.42.0
