@@ -2,7 +2,7 @@ art==6.4
 boto3==1.34.149
 botocore==1.34.149
 cachetools==5.5.0
-fastapi==0.115.5
+fastapi==0.138.2
 uvicorn==0.34.0
 fernet==1.0.1
 SQLAlchemy==2.0.36
