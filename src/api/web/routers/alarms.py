@@ -15,8 +15,6 @@ from urllib.request import Request, urlopen
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from licensing.gate import check_feature
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 
@@ -418,20 +416,9 @@ async def list_alarms(
     current_user=Depends(get_current_user),
 ):
     """List all custom alarms."""
-    check_feature("alarm:config")
     alarms = _core_list_payloads("alarms", order_by="created_at")
     result = [_serialize_payload(a) for a in alarms]
 
-    try:
-        track_event(
-            "web.alarms.list",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "count": len(result),
-            },
-        )
-    except Exception:
-        pass
 
     return result
 
@@ -442,7 +429,6 @@ async def create_alarm(
     user: Optional[dict] = Depends(get_current_user),
 ):
     """Create a new custom alarm."""
-    check_feature("alarm:config")
     if body.trigger_type != "recommendation":
         raise HTTPException(status_code=400, detail="trigger_type must be recommendation")
 
@@ -471,7 +457,6 @@ async def get_alarm(
     alarm_id: str,
     _user: Optional[dict] = Depends(get_current_user),
 ):
-    check_feature("alarm:config")
     return _serialize_payload(_core_get_payload("alarms", alarm_id))
 
 
@@ -481,7 +466,6 @@ async def update_alarm(
     body: AlarmUpdate,
     _user: Optional[dict] = Depends(get_current_user),
 ):
-    check_feature("alarm:config")
     alarm = _core_get_payload("alarms", alarm_id)
 
     data = body.model_dump(exclude_unset=True)
@@ -505,7 +489,6 @@ async def delete_alarm(
     alarm_id: str,
     _user: Optional[dict] = Depends(get_current_user),
 ):
-    check_feature("alarm:config")
     alarm = _core_get_payload("alarms", alarm_id)
     _core_delete_payload("alarms", alarm_id)
     return {"success": True, "message": f"Alarm '{alarm.get('name')}' deleted"}
@@ -525,7 +508,6 @@ async def evaluate_alarm(
 
     If match_count >= threshold, records an AlarmEvent and sends notifications.
     """
-    check_feature("alarm:config")
     alarm = _core_get_payload("alarms", alarm_id)
 
     match_count, sample = _core_count_matches(alarm)
@@ -573,7 +555,6 @@ async def evaluate_all(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Evaluate every enabled alarm. Called after a scan completes."""
-    check_feature("alarm:config")
     alarms = [alarm for alarm in _core_list_payloads("alarms", order_by="created_at") if alarm.get("enabled", True)]
     results = []
     now = datetime.now(timezone.utc)
@@ -620,7 +601,6 @@ async def list_alarm_events(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """List recent firing events for an alarm."""
-    check_feature("alarm:config")
     _core_get_payload("alarms", alarm_id)
     events = _core_list_payloads(
         "alarm-events",
@@ -637,7 +617,6 @@ async def test_alarm_notification(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Send a test notification to all configured targets."""
-    check_feature("alarm:config")
     alarm = _core_get_payload("alarms", alarm_id)
 
     ok, err = _send_notification(
@@ -658,7 +637,6 @@ async def get_alarm_options(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Return the options the alarm creation form needs."""
-    check_feature("alarm:config")
     return _core_alarm_options()
 
 

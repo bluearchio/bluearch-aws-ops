@@ -112,7 +112,6 @@ def scheduler(
     More information:
     [blue]https://docs.bluearch.io/bluearch-cli#/?id=scheduler[/blue]
     """
-    from utils.event_hooks import passthrough_decorator
     from aws.misc.error_handlings import error_handler
     from aws.wrappers.eventbridge import EventBridge
     from aws.wrappers.sfn import StateMachine
@@ -121,7 +120,6 @@ def scheduler(
     from rich.prompt import Prompt
 
     console = Console()
-    @passthrough_decorator
     def execute_scheduler():
         try:
             eb_client = EventBridge()
@@ -173,7 +171,6 @@ def populate():
     
     [yellow]The command does not update any resource, it is a read only operation that saves the information into the AWS S3 and DynamoDB Table.[/yellow]
     """
-    from utils.event_hooks import passthrough_decorator
     from aws.misc.error_handlings import error_handler
     from aws.wrappers.co import ComputeOptimizer
     from aws.wrappers.organizations import Organizations
@@ -184,7 +181,6 @@ def populate():
     from rich.prompt import Prompt
     from cli.recommendations import scheduler
 
-    @passthrough_decorator
     def execute():
         console = Console()
         try:

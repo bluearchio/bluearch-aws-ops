@@ -2,6 +2,7 @@
 .venv
 venv
 __pycache__
+*.egg-info/
 .env
 sandbox.py
 *.log
@@ -15,6 +16,7 @@ sandbox.py
 .binary
 htmlcov/
 .coverage
+.pytest_cache/
 combine.py
 .cli-venv/
 .worker-venv/
@@ -23,4 +25,7 @@ combine.py
 src/api/web/static/
 
 # Frontend dependencies
-frontend/node_modules/src/api/report_*.xlsx
+frontend/node_modules/
+
+# Generated local reports
+src/api/report_*.xlsx

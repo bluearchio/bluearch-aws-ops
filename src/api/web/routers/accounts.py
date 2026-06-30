@@ -7,7 +7,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 from web.schemas.accounts import AccountResponse
@@ -84,10 +83,6 @@ async def list_accounts(current_user=Depends(get_current_user)):
         accounts = _core_get("/api/v1/accounts")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core accounts unavailable: {exc}") from exc
-    try:
-        track_event("web.accounts.list", properties={"user_sub": getattr(current_user, "sub", None), "count": len(accounts), "source": "bluearch-core"})
-    except Exception:
-        pass
     return accounts
 
 

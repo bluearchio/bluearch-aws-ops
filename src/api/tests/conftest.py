@@ -1,6 +1,5 @@
 import pytest
 from typer.testing import CliRunner
-from functools import wraps
 from unittest.mock import MagicMock, AsyncMock, patch
 from aws.misc.alarm_ui import configure_alarms, configure_targets, AlarmConfigUI, AlarmTargetUI
 
@@ -86,7 +85,6 @@ def mock_error_handler(mocker):
     mock.handle_update_error = mocker.MagicMock()
     mock.handle_dynamodb_error = mocker.MagicMock()
     mock.handle_scheduler_error = mocker.MagicMock()
-    mock.handle_feature_request_error = mocker.MagicMock()
     
     # Configure mock to return itself when called
     mock.return_value = mock
@@ -101,49 +99,9 @@ def runner():
     return CliRunner()
 
 @pytest.fixture
-def mock_auth_wrapper(mocker):
-    """
-    Fixture to mock the AuthWrapper class and its methods.
-    """
-    mock_wrapper = mocker.patch('aws.wrappers.auth.AuthWrapper')
-    instance = mock_wrapper.return_value
-    # Set default return values for AuthWrapper methods
-    instance.is_subscribed_to_marketplace.return_value = False
-    instance.validate_api_key.return_value = (True, "Valid key", "BLUE-12345678-1234-1234-1234-123456789012")
-    instance.get_api_key.return_value = "BLUE-12345678-1234-1234-1234-123456789012"
-    return instance
-
-@pytest.fixture(autouse=True)
-def mock_event_hook_decorator(mocker):
-    """
-    Fixture to mock the passthrough_decorator to prevent actual event hook calls during testing.
-    """
-    def mock_decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Optionally, you can add assertions or logging here
-            return func(*args, **kwargs)
-        return wrapper
-    mocker.patch('utils.event_hooks.passthrough_decorator', side_effect=mock_decorator)
-    return mock_decorator
-@pytest.fixture
 def mock_logger(mocker):
     """Mock logger for ConfigManager"""
     return mocker.patch('utils.logger_config.log')
-
-@pytest.fixture(autouse=True)
-def mock_premium_decorator(mocker):
-    """
-    Fixture to mock the premium decorator used for premium features.
-    """
-    def mock_decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Simulate premium feature access
-            return func(*args, **kwargs)
-        return wrapper
-    mocker.patch('aws.wrappers.auth.premium', side_effect=mock_decorator)
-    return mock_decorator
 
 @pytest.fixture
 def mock_eb_client(mocker):
@@ -197,34 +155,6 @@ def mock_prompt(mocker):
     mock = mocker.patch('rich.prompt.Prompt')
     mock.ask = mocker.MagicMock()
     return mock
-
-@pytest.fixture
-def mock_auth_secrets_wrapper(mocker):
-    """Mock AuthSecretsWrapper"""
-    mock = mocker.patch('aws.wrappers.auth.AuthSecretsWrapper')
-    instance = mock.return_value
-    instance.get_secret.return_value = None
-    instance.put_secret.return_value = True
-    return mock
-
-@pytest.fixture
-def mock_config_manager(mocker):
-    mock_instance = mocker.MagicMock()
-    mock_instance.get_event_hook_config.return_value = {
-        "data_collected": {
-            "cli_version": True,
-            "command_used": True,
-            "execution_time": True,
-            "execution_status": True,
-            "error_reason": True,
-            "recommendations_count": True
-        }
-    }
-    return mock_instance
-
-@pytest.fixture
-def mock_event_hook_ui(mocker):
-    return mocker.MagicMock()
 
 @pytest.fixture
 def mock_cloudformation(mocker):

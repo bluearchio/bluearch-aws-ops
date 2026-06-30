@@ -1,4 +1,3 @@
-from licensing.gate import requires_tier
 from utils.logger_config import log
 from aws.wrappers.awsbase import AWSBase
 from aws.wrappers.organizations import Organizations
@@ -12,7 +11,6 @@ class ComputeOptimizer(AWSBase):
         super().__init__('compute-optimizer')
         self.org = Organizations()
 
-    @requires_tier("alarm:config")
     def get_enrollment_status(self) -> tuple[dict, bool]:
         try:
             response = self.client.get_enrollment_status()

@@ -1,17 +1,5 @@
 from typer import Option
 
-def feature_request():
-    """
-    Show where to submit a public feature request.
-    """
-    from rich.console import Console
-
-    console = Console()
-    console.print("Open a GitHub issue:")
-    console.print("[blue]https://github.com/bluearchio/bluearch-aws-ops/issues[/blue]")
-
-
-
 def delete():
     """
     [deprecated] Delete the CloudFormation stack.
@@ -26,10 +14,8 @@ def delete():
     )
     return
     # Legacy CloudFormation logic preserved below for reference
-    from utils.event_hooks import passthrough_decorator
     from aws.misc.error_handlings import error_handler
 
-    @passthrough_decorator
     def execute_delete():
         try:
             from aws.wrappers.cloudformation import CloudFormation
@@ -132,7 +118,6 @@ def update(
     from rich.markup import escape
     import typer
 
-    from utils.event_hooks import passthrough_decorator
     from aws.misc.error_handlings import error_handler
 
     console = Console()
@@ -271,7 +256,6 @@ def update(
                 parts.append(0)
         return tuple(parts)
 
-    @passthrough_decorator
     def execute_update():
         try:
             from aws.misc.version_controller import CURRENT_VERSION, get_updates
@@ -442,9 +426,7 @@ def deploy(add_accounts: bool = Option(False, "--add-accounts", help="Add more a
     )
     return
     # Legacy CloudFormation logic preserved below for reference
-    from utils.event_hooks import passthrough_decorator
     from utils.logger_config import log
-    @passthrough_decorator
     def execute_deploy():
         try:
             from aws.wrappers.cloudformation import CloudFormation

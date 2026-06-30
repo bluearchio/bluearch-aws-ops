@@ -10,7 +10,6 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 from web.schemas.infrastructure import InfrastructureStatusResponse, ResourceGroupInfo
@@ -43,17 +42,6 @@ async def get_infrastructure_status(
 ):
     """Get unified infrastructure status from bluearch-core."""
     result = _core_request("GET", "/api/v1/infrastructure/status", timeout=30.0)
-    try:
-        track_event(
-            "web.infrastructure.status",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "count": len(result.get("stacksets", [])) + len(result.get("stacks", [])),
-                "source": "bluearch-core",
-            },
-        )
-    except Exception:
-        pass
     return result
 
 

@@ -13,7 +13,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from licensing.gate import requires_tier
 from utils.display_utils import print_error, print_info, print_warning
 from utils.error_handlers import handle_all_errors
 
@@ -37,7 +36,6 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 @log_analysis_app.command(name="errors")
-@requires_tier("log_analysis:errors")
 @handle_all_errors
 def errors_cmd(
     scan_id: Optional[str] = typer.Option(None, "--scan-id", help="View a specific scan (default: latest)"),
@@ -208,7 +206,6 @@ def _resolve_log_finding_id(value: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 @log_analysis_app.command(name="analyze")
-@requires_tier("log_analysis:ai_analyze")
 @handle_all_errors
 def analyze_cmd(
     finding_id: str = typer.Argument(..., help="Finding ID (from `bluearch logs errors`)"),

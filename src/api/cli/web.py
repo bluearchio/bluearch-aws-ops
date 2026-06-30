@@ -19,7 +19,6 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from utils.event_hooks import emit_event
 
 console = Console()
 
@@ -103,28 +102,13 @@ def start(
         else:
             console.print("[yellow]Server is already running.[/yellow]")
             _show_status()
-            emit_event("web.server.start", surface="daemon", command="web_start", status="already_running")
             return
 
     port = _resolve_start_port(host, port)
 
     if daemon:
         _start_daemon(host, port, log_level, no_browser)
-        emit_event(
-            "web.server.start",
-            surface="daemon",
-            command="web_start",
-            status="success",
-            properties={"host": host, "port": port, "daemon": True},
-        )
     else:
-        emit_event(
-            "web.server.start",
-            surface="web",
-            command="web_start",
-            status="success",
-            properties={"host": host, "port": port, "daemon": False},
-        )
         _start_foreground(host, port, log_level, no_browser)
 
 
@@ -134,7 +118,6 @@ def stop():
     pid = _read_pid()
     if pid is None:
         console.print("[yellow]No running server found.[/yellow]")
-        emit_event("web.server.stop", surface="daemon", command="web_stop", status="stopped")
         return
 
     console.print(f"Stopping server (PID {pid})...")
@@ -160,7 +143,6 @@ def stop():
             pass
 
     _remove_pid()
-    emit_event("web.server.stop", surface="daemon", command="web_stop", status="success")
     console.print("[green]Server stopped.[/green]")
 
 
@@ -263,13 +245,6 @@ def _stop_known_web_servers(target_port: int) -> None:
     if stopped:
         console.print(
             f"[yellow]Stopped existing BlueArch/Tag Manager web process(es): {', '.join(map(str, stopped))}[/yellow]"
-        )
-        emit_event(
-            "web.server.port_reclaim",
-            surface="daemon",
-            command="web_start",
-            status="success",
-            properties={"target_port": target_port, "stopped_count": len(stopped)},
         )
     _remove_stale_pid_files()
 
@@ -588,13 +563,6 @@ def _is_python_executable(path: str) -> bool:
 def _show_status():
     pid = _read_pid()
     running = bool(pid and _is_process_alive(pid))
-    emit_event(
-        "web.server.status",
-        surface="daemon",
-        command="web_status",
-        status="success" if running else "stopped",
-        properties={"running": running},
-    )
     if running:
         console.print(f"[green]Server is running (PID {pid})[/green]")
         try:

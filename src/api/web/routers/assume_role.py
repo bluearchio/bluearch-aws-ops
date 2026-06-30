@@ -7,7 +7,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 from web.schemas.assume_role import AddAssumeRoleRequest, AssumeRoleConfigResponse, TestResultResponse
@@ -76,10 +75,6 @@ async def list_configs(current_user=Depends(get_current_user)):
         result = request_core("GET", "/api/v1/assume-role/configs", timeout=10.0)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core assume-role configs unavailable: {exc}") from exc
-    try:
-        track_event("web.assume_role.list", properties={"user_sub": getattr(current_user, "sub", None), "count": len(result), "source": "bluearch-core"})
-    except Exception:
-        pass
     return result
 
 

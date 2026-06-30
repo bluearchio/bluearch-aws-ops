@@ -16,8 +16,6 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from licensing.gate import check_feature
-from utils.event_hooks import track_event
 from web.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -333,7 +331,6 @@ def _get_cost_optimization_hub_enrollment() -> list[AccountEnrollment]:
 @router.get("/authorization")
 async def check_authorization(_user: Optional[dict] = Depends(get_current_user)):
     """Check if the current identity can manage Organizations opt-in settings."""
-    check_feature("optin_hub")
     is_authorized, err = await asyncio.to_thread(_is_management_or_delegated)
     return {"authorized": is_authorized, "error": err}
 
@@ -341,7 +338,6 @@ async def check_authorization(_user: Optional[dict] = Depends(get_current_user))
 @router.get("/services", response_model=List[ServiceStatus])
 async def list_services(current_user=Depends(get_current_user)):
     """List AWS Organizations trusted services and their enabled status."""
-    check_feature("optin_hub")
     def _fetch():
         enabled = _list_enabled_org_services()
         return [
@@ -359,16 +355,6 @@ async def list_services(current_user=Depends(get_current_user)):
 
     result = await asyncio.to_thread(_fetch)
 
-    try:
-        track_event(
-            "web.optin.list",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "count": len(result),
-            },
-        )
-    except Exception:
-        pass
 
     return result
 
@@ -379,7 +365,6 @@ async def toggle_service(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Enable or disable an AWS Organizations trusted service."""
-    check_feature("optin_hub")
     is_authorized, err = await asyncio.to_thread(_is_management_or_delegated)
     if not is_authorized:
         raise HTTPException(status_code=403, detail=err or "Not authorized")
@@ -413,7 +398,6 @@ async def get_enrollment(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Get per-account enrollment status for Compute Optimizer or Cost Optimization Hub."""
-    check_feature("optin_hub")
     if service not in ("compute-optimizer", "cost-optimization-hub"):
         raise HTTPException(status_code=400, detail="Service must be compute-optimizer or cost-optimization-hub")
 
@@ -438,7 +422,6 @@ async def update_enrollment(
     _user: Optional[dict] = Depends(get_current_user),
 ):
     """Update Compute Optimizer or Cost Optimization Hub enrollment for an account."""
-    check_feature("optin_hub")
     if body.service not in ("compute-optimizer", "cost-optimization-hub"):
         raise HTTPException(status_code=400, detail="Unsupported service")
     if body.status not in ("Active", "Inactive"):

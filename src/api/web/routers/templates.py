@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core, request_core_response
 from web.dependencies import get_current_user
 
@@ -35,17 +34,6 @@ def _core_template_request(path: str):
 async def list_templates(current_user=Depends(get_current_user)):
     """List available CloudFormation templates."""
     result = _core_template_request("/api/v1/system/templates")
-    try:
-        track_event(
-            "web.templates.list",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "count": len(result),
-                "source": "bluearch-core",
-            },
-        )
-    except Exception:
-        pass
 
     return result
 

@@ -48,8 +48,16 @@ Frontend:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
+```
+
+Shortcut:
+
+```bash
+make setup
+make backend-dev
+make frontend-dev
 ```
 
 ## Tests
@@ -60,6 +68,23 @@ PYTHONPATH=src/api python -m compileall src/api
 cd frontend && npm run build
 ```
 
+Shortcut:
+
+```bash
+make test
+```
+
+## Security And Privacy Defaults
+
+- The dashboard binds to loopback by default.
+- Calls to `bluearch-aws-core` use the local service token.
+- AWS credentials stay in the user's local AWS config/credential chain.
+- No BlueArch-hosted telemetry, hosted sign-in, license gates, or private release services are included.
+- Generated reports, logs, screenshots, and resource inventories may contain sensitive account data.
+- Report suspected vulnerabilities privately; see `SECURITY.md`.
+
 ## Contributing
 
 Keep AWS access user-owned through profiles, AWS SSO, and assume-role. Do not add BlueArch-hosted analytics, product sign-in, license gates, private buckets, internal AWS account IDs, Slack ops notifications, or private signing/release flows. New shared runtime needs should be implemented in `bluearch-aws-core` first.
+
+See `CONTRIBUTING.md` for the full contribution workflow.

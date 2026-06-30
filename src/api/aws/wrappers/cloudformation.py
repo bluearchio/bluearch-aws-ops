@@ -9,6 +9,7 @@ from rich.console import Console
 from  botocore.exceptions import WaiterError
 from aws.wrappers.s3 import S3Wrapper
 from aws.wrappers.awsbase import AWSBase
+from utils.template_resolver import get_template_content, resolve_template
 # Ensure console can handle UTF-8 characters
 import sys
 # sys.stdout.reconfigure(encoding='utf-8')
@@ -19,7 +20,7 @@ class CloudFormation(AWSBase):
         self._cfn_outputs = None
         self.stack_name = 'bluearch-alerting-engine-cli-dev' if os.getenv('BLUEARCH_DEBUG') else 'bluearch-alerting-engine-cli'
         self._account_ids = None
-        self.template_url = 'https://bluearch-templates.s3.amazonaws.com/local_cli_version/dev/alerting-engine-cli.yaml' if os.getenv('BLUEARCH_DEBUG') else 'https://bluearch-templates.s3.amazonaws.com/local_cli_version/alerting-engine-cli.yaml'
+        self.template_name = "management_account_resources.yaml"
         self._region_name = region_name or CURRENT_REGION
         self._client = None  # Initialize _client to None
 
@@ -113,7 +114,7 @@ class CloudFormation(AWSBase):
                     
         return self.client.create_stack(
             StackName=self.stack_name,
-            TemplateURL=self.template_url,
+            **resolve_template(self.template_name),
             Capabilities=['CAPABILITY_NAMED_IAM'],
             Parameters=parameters
         )
@@ -230,7 +231,7 @@ class CloudFormation(AWSBase):
             try:
                 create_response = self.client.create_change_set(
                     StackName=self.stack_name,
-                    TemplateURL=self.template_url,
+                    **resolve_template(self.template_name),
                     Parameters=formatted_parameters,
                     Capabilities=['CAPABILITY_NAMED_IAM'],
                     ChangeSetName=f'{self.stack_name}-change-set'
@@ -268,7 +269,7 @@ class CloudFormation(AWSBase):
 
     def get_template_parameters(self):
         # Retrieve the parameters from the new template
-        response = self.client.get_template_summary(TemplateURL=self.template_url)
+        response = self.client.get_template_summary(TemplateBody=get_template_content(self.template_name))
         template_parameters = [param['ParameterKey'] for param in response.get('Parameters', [])]
         return template_parameters
     
@@ -560,4 +561,3 @@ class CloudFormation(AWSBase):
             table.title = f"Stack Status: {stack_status}"
 
         return table
-    

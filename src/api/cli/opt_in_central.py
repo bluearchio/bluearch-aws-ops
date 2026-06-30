@@ -2,15 +2,11 @@ def optin_hub():
     """
     Configure AWS Opt-In services settings.
     """
-    from utils.event_hooks import passthrough_decorator
     from aws.misc.error_handlings import error_handler
-    from licensing.gate import requires_tier
     from aws.wrappers.organizations import Organizations
     from rich.console import Console
     from aws.misc.optin_ui import OptInUI
 
-    @passthrough_decorator
-    @requires_tier("optin_hub")
     def show_optin_hub():
         try:
             console = Console()

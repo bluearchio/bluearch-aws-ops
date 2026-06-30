@@ -31,7 +31,7 @@ def get_job_manager() -> JobManager:
 def get_current_user(request: Request) -> LocalUser:
     """Return a local dashboard user context.
 
-    Public builds do not use BlueArch-hosted browser sign-in. The local web
+    Public builds do not use BlueArch-hosted browser authentication. The local web
     dashboard is protected by loopback binding and the core service-token
     boundary between product backends and bluearch-core.
     """

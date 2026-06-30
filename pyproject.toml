@@ -1,7 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "bluearch-aws-ops"
+version = "0.13.2"
 description = "BlueArch AWS Ops CLI and dashboard for recommendations, alerting, and remediation"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "BlueArch contributors" }]
+dynamic = ["dependencies"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+bluearch = "bluearch:run"
+
+[tool.setuptools]
+package-dir = {"" = "src/api"}
+
+[tool.setuptools.packages.find]
+where = ["src/api"]
+include = [
+    "aws*",
+    "cli*",
+    "commons*",
+    "database*",
+    "db*",
+    "modules*",
+    "routes*",
+    "utils*",
+    "web*",
+]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["src/api/requirements.txt"] }
 
 # ---------------------------------------------------------------------------
 # Black — code formatting

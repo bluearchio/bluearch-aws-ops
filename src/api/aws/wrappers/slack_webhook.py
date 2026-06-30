@@ -2,28 +2,50 @@ import requests
 import json
 import re
 import time
+from pathlib import Path
 from typing import List
-from aws.wrappers.auth import SlackSecretsWrapper
 
 class SlackWebhookWrapper:
+    storage_path = Path.home() / ".bluearch" / "slack-webhooks.json"
+
     def __init__(self):
-        self.slack_secrets = SlackSecretsWrapper()
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
 
     def create_webhook(self, webhook_url: str) -> tuple[bool, str]:
         if not self.validate_webhook_url(webhook_url):
             return False, "Invalid webhook URL format"
         if self.test_webhook(webhook_url):
-            if self.slack_secrets.store_slack_webhook(webhook_url):
+            if self._store_webhook(webhook_url):
                 return True, "Webhook added successfully"
             else:
                 return False, "Failed to store webhook"
         return False, "Failed to test webhook"
 
     def list_webhooks(self) -> List[str]:
-        return self.slack_secrets.get_slack_webhooks()
+        return self._read_webhooks()
 
     def delete_webhook(self, webhook_url: str) -> bool:
-        return self.slack_secrets.delete_slack_webhook(webhook_url)
+        return self._write_webhooks([item for item in self._read_webhooks() if item != webhook_url])
+
+    def _read_webhooks(self) -> list[str]:
+        try:
+            payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        return payload if isinstance(payload, list) else []
+
+    def _write_webhooks(self, webhooks: list[str]) -> bool:
+        try:
+            self.storage_path.write_text(json.dumps(webhooks), encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def _store_webhook(self, webhook_url: str) -> bool:
+        webhooks = self._read_webhooks()
+        if webhook_url not in webhooks:
+            webhooks.append(webhook_url)
+        return self._write_webhooks(webhooks)
 
     def test_webhook(self, webhook_url: str) -> bool:
         current_time = int(time.time())

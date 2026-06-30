@@ -144,14 +144,4 @@ class ErrorHandler:
         else:
             self.console.print(f"[red]An error occurred while setting the scheduler: {error}[/red]")
         log.debug(traceback.format_exc())
-    def handle_feature_request_error(self, error):
-        if "token included in the request is invalid" in error:
-            self._handle_no_credentials_error()
-        elif "Unable to locate credentials" in error:
-            self._handle_no_credentials_error()
-        elif ClientError in error:
-            self._handle_client_error(error)
-        else:
-            self.console.print(f"[red]Unexpected error: {error}[/red]")
-        log.debug(traceback.format_exc())
 error_handler = ErrorHandler()

@@ -7,7 +7,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 
@@ -82,13 +81,6 @@ async def validate_setup(_user: Optional[dict] = Depends(get_current_user)) -> S
         result = _normalize_core_validation(request_core("GET", "/api/v1/setup/validate", timeout=15.0))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core setup validation unavailable: {exc}") from exc
-    try:
-        track_event(
-            "web.setup.validate",
-            properties={"user_sub": getattr(_user, "sub", None), "count": len(result.checks), "overall": result.overall, "source": "bluearch-core"},
-        )
-    except Exception:
-        pass
     return result
 
 

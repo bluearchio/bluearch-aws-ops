@@ -10,7 +10,6 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 
@@ -185,10 +184,6 @@ async def get_graph_data(
         truncated=bool(resources_payload.get("total", 0) > limit),
         stats={"total_nodes": len(nodes), "total_edges": len(edges), "by_service": dict(Counter(node.service_name for node in nodes))},
     )
-    try:
-        track_event("web.graph.data", properties={"user_sub": getattr(current_user, "sub", None), "count": len(result.nodes), "source": "bluearch-core"})
-    except Exception:
-        pass
     return result
 
 

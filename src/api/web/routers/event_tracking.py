@@ -7,7 +7,6 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 
@@ -87,17 +86,6 @@ async def get_event_tracking_status(current_user=Depends(get_current_user)):
         result = _core_get("/api/v1/event-tracking/status")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core event tracking unavailable: {exc}") from exc
-    try:
-        track_event(
-            "web.event_tracking.status",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "instances": len(result.get("instances", [])),
-                "source": "bluearch-core",
-            },
-        )
-    except Exception:
-        pass
     return result
 
 

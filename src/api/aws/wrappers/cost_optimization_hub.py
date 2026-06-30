@@ -1,7 +1,6 @@
 from rich.console import Console
 
 from utils.logger_config import log
-from licensing.gate import requires_tier
 from aws.wrappers.awsbase import AWSBase
 from aws.wrappers.organizations import Organizations
 
@@ -11,7 +10,6 @@ class CostOptimizationHub(AWSBase):
         super().__init__('cost-optimization-hub')
         self.org = Organizations()
 
-    @requires_tier("alarm:config")
     def get_enrollment_statuses(self, account_id: str = None) -> dict:
         try:
             response = self.client.list_enrollment_statuses(account_id=account_id) if account_id else self.client.list_enrollment_statuses()

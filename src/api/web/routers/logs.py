@@ -17,7 +17,6 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from licensing.gate import check_feature
 from utils.core_client import CoreRuntimeError, request_core
 from web.core_storage import get_storage_payload, list_storage_payloads, update_storage_payload
 from web.schemas.logs import (
@@ -40,7 +39,6 @@ async def list_scans(
     limit: int = Query(20, ge=1, le=200),
 ):
     """List recent log scans (populated by the unified `bluearch scan`)."""
-    check_feature("log_analysis:errors")
     rows = list_storage_payloads(
         "bluearch",
         "log-scans",
@@ -125,7 +123,6 @@ async def list_findings(
     page_size: int = Query(50, ge=1, le=500),
 ):
     """List log analysis findings with filters."""
-    check_feature("log_analysis:errors")
 
     batch_ids: set[str] | None = None
     if scan_id:
@@ -178,7 +175,6 @@ async def list_findings(
 @router.get("/findings/{finding_id}", response_model=LogFindingResponse)
 async def get_finding(finding_id: str):
     """Fetch one finding by id."""
-    check_feature("log_analysis:errors")
     try:
         row = get_storage_payload("bluearch", "log-findings", finding_id)
     except CoreRuntimeError as exc:
@@ -204,7 +200,6 @@ async def analyze_finding(
     Non-streaming — useful for scripts / the CLI. The web UI prefers the
     streaming variant below so the user sees tool calls in real time.
     """
-    check_feature("log_analysis:ai_analyze")
 
     row = _get_finding_payload(finding_id)
     service, finding, resource = _analysis_context(row)
@@ -238,7 +233,6 @@ async def analyze_finding_stream(
     tool invocation / result happens. Final ``{type:"done", analysis:"..."}``
     event is emitted after the model finishes and the row is persisted.
     """
-    check_feature("log_analysis:ai_analyze")
 
     # Resolve everything the streamer needs inside a short DB session so
     # the thread below doesn't hold a connection the whole time.

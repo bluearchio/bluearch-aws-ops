@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 from web.schemas.common import PaginatedResponse
@@ -43,9 +42,6 @@ async def list_recommendations(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core recommendations unavailable: {exc}") from exc
 
-    _track_recommendation_list(
-        current_user, result.items, result.total, page, page_size, recommendation_type, account_id, region
-    )
     return result
 
 
@@ -337,31 +333,3 @@ def _normalize_payload(payload: dict) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
     return normalized
-
-
-def _track_recommendation_list(
-    current_user,
-    items,
-    total: int,
-    page: int,
-    page_size: int,
-    recommendation_type: str | None,
-    account_id: str | None,
-    region: str | None,
-) -> None:
-    try:
-        track_event(
-            "web.recommendations.list",
-            properties={
-                "user_sub": getattr(current_user, "sub", None),
-                "count": len(items),
-                "total": total,
-                "page": page,
-                "page_size": page_size,
-                "recommendation_type": recommendation_type,
-                "account_id": account_id,
-                "region": region,
-            },
-        )
-    except Exception:
-        pass

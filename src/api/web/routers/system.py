@@ -8,7 +8,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from aws.misc.version_controller import CURRENT_VERSION
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 from web.routers.setup import SetupValidateResponse, get_iam_policy, validate_setup
@@ -53,13 +52,6 @@ async def system_stats(current_user=Depends(get_current_user)):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core system stats unavailable: {exc}") from exc
     active_jobs = [job for job in jobs if job.get("status") in {"pending", "running", "cancelling"}]
-    try:
-        track_event(
-            "web.system.stats",
-            properties={"user_sub": getattr(current_user, "sub", None), "count": resource_summary.get("total", 0), "source": "bluearch-core"},
-        )
-    except Exception:
-        pass
     return {
         "resources": resource_summary.get("total", 0),
         "recommendations": len(recommendations),
@@ -88,24 +80,12 @@ async def system_permissions(_user: Optional[dict] = Depends(get_current_user)):
     try:
         return request_core("GET", "/api/v1/system/permissions", timeout=5.0)
     except Exception:
-        try:
-            from web.routers.license import get_license
-
-            license_info = await get_license(current_user=_user)
-            features = license_info.get("features") or {}
-            tier = str(license_info.get("tier") or "free").lower()
-            if isinstance(features, list):
-                feature_map = {name: {"available": True} for name in features}
-            else:
-                feature_map = {str(name): {"available": bool(allowed)} for name, allowed in dict(features).items()}
-            return {
-                "account_id": license_info.get("account_id"),
-                "tier": tier,
-                "features": feature_map,
-                "checked_at": datetime.now(timezone.utc).isoformat(),
-            }
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"permission status unavailable: {exc}") from exc
+        return {
+            "account_id": None,
+            "tier": "open-source",
+            "features": {"all": {"available": True}},
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 @router.post("/api/v1/system/permissions/refresh")

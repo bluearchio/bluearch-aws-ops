@@ -8,7 +8,6 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from utils.event_hooks import track_event
 from utils.core_client import request_core
 from web.dependencies import get_current_user
 
@@ -62,10 +61,6 @@ async def list_jobs(
         result = _core_get(f"/api/v1/jobs{query}")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"bluearch-core jobs unavailable: {exc}") from exc
-    try:
-        track_event("web.jobs.list", properties={"user_sub": getattr(current_user, "sub", None), "count": len(result)})
-    except Exception:
-        pass
     return result
 
 
