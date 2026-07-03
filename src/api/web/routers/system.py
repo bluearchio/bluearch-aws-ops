@@ -15,11 +15,10 @@ from web.routers.setup import SetupValidateResponse, get_iam_policy, validate_se
 router = APIRouter(tags=["system"])
 
 
-@router.get("/api/v1/system/health")
-async def health_check():
+async def _health_payload():
     """Fast readiness check for the local product server and core dependency."""
     try:
-        core_health = request_core("GET", "/api/v1/core/health", timeout=1.0)
+        core_health = request_core("GET", "/api/v1/core/health", service_token=False, timeout=1.0)
     except Exception as exc:
         return {
             "status": "unhealthy",
@@ -39,6 +38,16 @@ async def health_check():
             "message": "Use /api/v1/setup/validate for AWS credential status.",
         },
     }
+
+
+@router.get("/api/v1/system/health")
+async def health_check():
+    return await _health_payload()
+
+
+@router.get("/api/v1/health")
+async def health_check_alias():
+    return await _health_payload()
 
 
 @router.get("/api/v1/system/stats")

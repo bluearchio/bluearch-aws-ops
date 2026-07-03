@@ -55,7 +55,7 @@ def read_service_token() -> str:
         ) from exc
 
 
-def request_core(method: str, path: str, *, service_token: bool = False, timeout: float = 5.0, **kwargs) -> Any:
+def request_core(method: str, path: str, *, service_token: bool = True, timeout: float = 5.0, **kwargs) -> Any:
     response = request_core_response(method, path, service_token=service_token, timeout=timeout, **kwargs)
     if not response.content:
         return None
@@ -66,7 +66,7 @@ def request_core_response(
     method: str,
     path: str,
     *,
-    service_token: bool = False,
+    service_token: bool = True,
     timeout: float = 5.0,
     raise_for_status: bool = True,
     **kwargs,
@@ -90,10 +90,11 @@ def check_core_dependency(app_name: str = "bluearch", minimum_version: str | Non
         status = request_core(
             "GET",
             f"/api/v1/core/dependency/status?app={app_name}&minimum_version={minimum_version}",
+            service_token=False,
             timeout=2.0,
         )
     except CoreRuntimeError:
-        health = request_core("GET", "/api/v1/core/health", timeout=2.0)
+        health = request_core("GET", "/api/v1/core/health", service_token=False, timeout=2.0)
         version = health.get("version", "unknown")
         compatible = _is_development_version(version) or _version_tuple(version) >= _version_tuple(minimum_version)
         status = {

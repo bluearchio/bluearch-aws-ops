@@ -58,15 +58,6 @@
         </div>
       </div>
 
-      <!-- Upgrade Path -->
-      <div v-if="permissionStore.status.upgrade_path" class="upgrade-path">
-        <i class="pi pi-arrow-up-right"></i>
-        <div class="upgrade-content">
-          <strong>Next: {{ permissionStore.status.upgrade_path.next_tier }}</strong>
-          <span>{{ permissionStore.status.upgrade_path.action }}</span>
-          <span class="upgrade-unlocks">Unlocks: {{ permissionStore.status.upgrade_path.unlocks.join(', ') }}</span>
-        </div>
-      </div>
     </div>
 
     <!-- SSO Expired Alert -->
@@ -257,7 +248,6 @@
     </div>
 
     <!-- Event Tracking Section -->
-    <ProBadge feature="event_tracking" label="Event Tracking">
     <div v-if="etData || etLoading" class="section-card">
       <div class="section-header">
         <h3 class="section-title">
@@ -400,7 +390,6 @@
         </div>
       </template>
     </div>
-    </ProBadge>
 
     <!-- Check Results -->
     <div v-if="result" class="checks-grid">
@@ -614,7 +603,6 @@ import { api } from '@/api/client'
 import { useSetupStore } from '@/stores/setup'
 import { useContextStore } from '@/stores/context'
 import { usePermissionStore } from '@/stores/permissions'
-import ProBadge from '@/components/ProBadge.vue'
 import type { EventTrackingStatusResponse, EventTrackingInstanceStatus } from '@/types/api'
 
 const router = useRouter()

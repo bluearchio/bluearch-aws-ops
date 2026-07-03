@@ -163,7 +163,7 @@ def _ensure_tables():
     try:
         from utils.core_client import request_core
 
-        health = request_core("GET", "/api/v1/core/health", timeout=3.0)
+        health = request_core("GET", "/api/v1/core/health", service_token=False, timeout=3.0)
         logger.info(
             "bluearch-core connected: version=%s db=%s",
             health.get("version", "unknown"),

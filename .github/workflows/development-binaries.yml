@@ -1,0 +1,68 @@
+name: Development Binaries
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BINARY_NAME: bluearch
+
+jobs:
+  build-unsigned:
+    name: Unsigned ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            script: scripts/build_nuitka_linux.sh
+            archive: tar
+          - platform: macos-arm64
+            os: macos-14
+            script: scripts/build_nuitka_macos.sh
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r src/api/requirements.txt -e .
+          if [[ "$RUNNER_OS" == "macOS" && -f build-requirements-macos.txt ]]; then
+            python -m pip install -r build-requirements-macos.txt
+          else
+            python -m pip install -r build-requirements.txt
+          fi
+      - name: Build unsigned binary
+        run: bash "${{ matrix.script }}"
+      - name: Package unsigned artifact
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            ditto -c -k --keepParent "dist/$BINARY_NAME" "artifacts/$BINARY_NAME-${{ matrix.platform }}-unsigned.zip"
+          else
+            tar -C dist -czf "artifacts/$BINARY_NAME-${{ matrix.platform }}-unsigned.tar.gz" "$BINARY_NAME"
+          fi
+          shasum -a 256 artifacts/* > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.platform }}-unsigned
+          path: artifacts/*
+          if-no-files-found: error

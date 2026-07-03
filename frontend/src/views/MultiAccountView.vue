@@ -1,6 +1,5 @@
 <template>
   <div class="ma-view">
-    <ProBadge feature="cross_account" label="Multi-Account Management">
     <!-- Header -->
     <div class="ma-header">
       <div class="ma-header-left">
@@ -319,7 +318,6 @@
         </div>
       </div>
     </div>
-    </ProBadge>
   </div>
 </template>
 
@@ -329,9 +327,7 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { api } from '@/api/client'
 import { useJobsStore } from '@/stores/jobs'
-import { useLicenseStore } from '@/stores/license'
 import { useMultiAccountStore } from '@/stores/multiAccount'
-import ProBadge from '@/components/ProBadge.vue'
 
 const router = useRouter()
 const jobsStore = useJobsStore()
@@ -534,11 +530,7 @@ function formatDate(iso?: string | null): string {
   }
 }
 
-const licenseStore = useLicenseStore()
-
-onMounted(async () => {
-  await licenseStore.load({ background: true })
-  if (!licenseStore.isFeatureAllowed('cross_account')) return
+onMounted(() => {
   multiAccountStore.load({ background: true })
   multiAccountStore.loadTemplateMeta({ background: true })
   // Recover any in-flight multi-account job after page reload

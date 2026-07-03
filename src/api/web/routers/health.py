@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/system", tags=["system"])
 async def health_check():
     """Fast readiness check for the local product server and core dependency."""
     try:
-        core_health = request_core("GET", "/api/v1/core/health", timeout=1.0)
+        core_health = request_core("GET", "/api/v1/core/health", service_token=False, timeout=1.0)
     except Exception as exc:
         return {
             "status": "unhealthy",

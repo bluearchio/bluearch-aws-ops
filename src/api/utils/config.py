@@ -31,11 +31,6 @@ def get_config_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".config", "bluearch-cli")
 
 
-def get_license_key_file() -> str:
-    """Path to the optional local activation file."""
-    return os.path.join(get_bluearch_home(), "license.key")
-
-
 def get_db_path() -> str:
     """Full path to the SQLite database."""
     return os.path.join(get_data_dir(), "bluearch.db")
@@ -53,8 +48,3 @@ def get_aws_profile() -> Optional[str]:
 def is_debug() -> bool:
     """Debug mode flag."""
     return os.environ.get("BLUEARCH_DEBUG", "").lower() in ("1", "true", "yes")
-
-
-def get_license_key() -> Optional[str]:
-    """License key from env var."""
-    return os.environ.get("BLUEARCH_LICENSE_KEY")

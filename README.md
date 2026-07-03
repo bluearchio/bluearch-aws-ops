@@ -74,6 +74,18 @@ Shortcut:
 make test
 ```
 
+## Verifying Release Assets
+
+Tagged releases are published from GitHub Actions after Linux and signed/notarized macOS artifacts are built. Release assets include platform archives, CycloneDX SBOMs, `SHA256SUMS`, and GitHub artifact attestations.
+
+```bash
+sha256sum -c SHA256SUMS
+# macOS: shasum -a 256 -c SHA256SUMS
+gh attestation verify bluearch-linux-x86_64.tar.gz --repo bluearchio/bluearch-aws-ops
+```
+
+For macOS, verify `bluearch-macos-arm64.zip` with `gh attestation verify`.
+
 ## Security And Privacy Defaults
 
 - The dashboard binds to loopback by default.

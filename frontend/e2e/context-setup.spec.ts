@@ -219,16 +219,6 @@ test.describe('Assume Role API', () => {
   })
 })
 
-test.describe('License API', () => {
-  test('license endpoint returns tier info', async ({ request }) => {
-    const res = await request.get('/api/v1/license')
-    expect(res.status()).toBe(200)
-    const body = await res.json()
-    expect(body.tier).toBeDefined()
-    expect(['FREE', 'PRO', 'ENTERPRISE', 'free', 'pro', 'enterprise']).toContain(body.tier)
-  })
-})
-
 test.describe('Setup UI - Deep Validation', () => {
   test('setup page shows all check categories after validation', async ({ page }) => {
     await page.goto('/setup')

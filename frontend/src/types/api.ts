@@ -306,27 +306,6 @@ export interface IAMPolicyStatement {
   Resource?: string[] | string
 }
 
-// --- License ---
-
-export interface LicenseInfo {
-  // Backend returns lowercase ("pro", "free", "enterprise"); normalize in the store.
-  tier: string
-  is_free?: boolean
-  // Backend returns a map of feature -> bool. Keep it typed as a record.
-  features?: Record<string, boolean>
-  customer?: string
-  org_id?: string
-  exp?: number
-  products?: string[]
-  max_users?: number
-  source?: string
-  // Legacy / optional
-  valid?: boolean
-  expires_at?: string
-  account_id?: string
-  product?: string
-}
-
 // --- Assume Role ---
 
 export interface AssumeRoleConfig {
@@ -421,19 +400,12 @@ export interface FeatureStatus {
   note?: string
 }
 
-export interface UpgradePath {
-  next_tier: string
-  action: string
-  unlocks: string[]
-}
-
 export interface PermissionStatusResponse {
   account_id?: string
   tier: string
   features: Record<string, FeatureStatus>
   checked_at?: string
   expires_at?: string
-  upgrade_path?: UpgradePath
 }
 
 // --- AI Chat ---

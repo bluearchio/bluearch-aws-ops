@@ -22,7 +22,6 @@ TTL_RECOMMENDATIONS = 300    # 5 minutes — recommendation results
 TTL_CFN_OUTPUTS = 3600       # 1 hour — CloudFormation stack outputs
 TTL_AUTH = 3600              # 1 hour — API key / auth status
 TTL_ASSUMED_ROLE = 3500      # ~58 min — STS assumed role (expires at 1hr)
-TTL_LICENSE = 3600           # 1 hour — license revocation check
 TTL_VERSION = 86400          # 24 hours — version check
 TTL_LOG_SAMPLES = 3600       # 1 hour — raw CloudWatch log samples (re-fetchable)
 
