@@ -14,6 +14,8 @@ concurrency:
 
 env:
   BINARY_NAME: bluearch
+  HOMEBREW_FORMULA: bluearch-aws-ops
+  HOMEBREW_TAP_REPO: bluearchio/homebrew-tap
   RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
@@ -191,6 +193,15 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: release-assets/*
+      - name: Validate Homebrew tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "::error::Missing HOMEBREW_TAP_TOKEN_2. Create a fine-grained token scoped to ${HOMEBREW_TAP_REPO} contents and pull requests."
+            exit 1
+          fi
       - name: Publish draft release with all assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -202,3 +213,53 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" release-assets/* --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
           gh release edit "$RELEASE_TAG" --draft=false
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          path: homebrew-tap
+          persist-credentials: false
+      - name: Update Homebrew formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="${BINARY_NAME}-macos-arm64.zip"
+          sha256="$(sha256sum "release-assets/${asset}" | awk '{print $1}')"
+          python3 homebrew-tap/scripts/update_formula.py \
+            --formula "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${RELEASE_TAG}" \
+            --asset "${asset}" \
+            --sha256 "${sha256}" \
+            --binary "${BINARY_NAME}"
+          ruby -c "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb"
+      - name: Open Homebrew tap pull request
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add "Formula/${HOMEBREW_FORMULA}.rb"
+          if git diff --cached --quiet; then
+            echo "No Homebrew formula changes."
+            exit 0
+          fi
+          git commit -m "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}"
+          gh auth setup-git -h github.com
+          git push --force-with-lease origin "${branch}"
+          if gh pr list --repo "${HOMEBREW_TAP_REPO}" --head "${branch}" --json number --jq '.[0].number // empty' | grep -q .; then
+            echo "Homebrew tap pull request already exists."
+          else
+            gh pr create \
+              --repo "${HOMEBREW_TAP_REPO}" \
+              --base main \
+              --head "${branch}" \
+              --title "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}" \
+              --body "Updates ${HOMEBREW_FORMULA} to ${RELEASE_TAG} from ${GITHUB_REPOSITORY}."
+          fi

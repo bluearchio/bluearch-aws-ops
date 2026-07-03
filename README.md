@@ -86,6 +86,8 @@ gh attestation verify bluearch-linux-x86_64.tar.gz --repo bluearchio/bluearch-aw
 
 For macOS, verify `bluearch-macos-arm64.zip` with `gh attestation verify`.
 
+Release workflows also open a pull request against `bluearchio/homebrew-tap` to update `bluearch-aws-ops`. Configure `HOMEBREW_TAP_TOKEN_2` before cutting a public tag.
+
 ## Security And Privacy Defaults
 
 - The dashboard binds to loopback by default.
