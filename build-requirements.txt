@@ -1,5 +1,5 @@
 pyinstaller>=6.16.0
-pyinstaller-hooks-contrib>=2024.6
+pyinstaller-hooks-contrib>=2026.6
 nuitka>=2.0
 ordered-set>=4.1.0   # Nuitka dependency
 zstandard>=0.21.0    # Nuitka compression support
