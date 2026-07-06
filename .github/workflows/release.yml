@@ -253,6 +253,7 @@ jobs:
     permissions:
       contents: write
       attestations: write
+      artifact-metadata: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -271,9 +272,14 @@ jobs:
           cd release-assets
           find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%P\0' | \
             sort -z | xargs -0 sha256sum > SHA256SUMS
-      - uses: actions/attest-build-provenance@v2
+      - name: Generate artifact provenance attestations
+        if: github.event.repository.private == false
+        uses: actions/attest@v4
         with:
           subject-path: release-assets/*
+      - name: Note skipped artifact attestations
+        if: github.event.repository.private
+        run: echo "::notice::Artifact attestations are skipped while this repository is private. They will run for public release tags."
       - name: Validate Homebrew tap token
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
