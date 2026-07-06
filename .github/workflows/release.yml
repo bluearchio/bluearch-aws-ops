@@ -154,20 +154,24 @@ jobs:
           upload-release-assets: false
       - name: Import Apple signing assets
         env:
-          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MACOS_CERTIFICATE_PWD }}
           MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY_SECRET: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         shell: bash
         run: |
-          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_KEYCHAIN_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing required signing secret: $name"
               exit 1
             fi
           done
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="${MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
+          export KEYCHAIN_PATH KEYCHAIN_PASSWORD
           python3 - <<'PY'
           import base64
           import os
@@ -175,35 +179,64 @@ jobs:
 
           temp = Path(os.environ["RUNNER_TEMP"])
           (temp / "developer_id.p12").write_bytes(base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"]))
-          (temp / f"AuthKey_{os.environ['APPLE_API_KEY_ID']}.p8").write_bytes(base64.b64decode(os.environ["APPLE_API_KEY_P8_BASE64"]))
+          api_key_id = os.environ.get("APPLE_API_KEY_ID")
+          api_key = os.environ.get("APPLE_API_KEY_P8_BASE64")
+          if api_key_id and api_key:
+              (temp / f"AuthKey_{api_key_id}.p8").write_bytes(base64.b64decode(api_key))
           PY
-          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$RUNNER_TEMP/build.keychain"
-          security default-keychain -s "$RUNNER_TEMP/build.keychain"
-          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$RUNNER_TEMP/build.keychain"
-          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/build.keychain"
-          security import "$RUNNER_TEMP/developer_id.p12" -k "$RUNNER_TEMP/build.keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$RUNNER_TEMP/build.keychain"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/developer_id.p12" -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          identity="${MACOS_CODESIGN_IDENTITY_SECRET:-}"
+          if [[ -z "$identity" ]]; then
+            identity="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          fi
+          if [[ -z "$identity" ]]; then
+            echo "::error::Developer ID Application certificate not found in imported keychain."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+          {
+            echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+            echo "MACOS_CODESIGN_IDENTITY=$identity"
+          } >> "$GITHUB_ENV"
       - name: Codesign and notarize macOS asset
         env:
-          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD || secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
-          trap 'security delete-keychain "$RUNNER_TEMP/build.keychain" || true' EXIT
+          trap 'security delete-keychain "$KEYCHAIN_PATH" || true' EXIT
           if [[ -z "${MACOS_CODESIGN_IDENTITY:-}" ]]; then
             echo "::error::Missing required signing secret: MACOS_CODESIGN_IDENTITY"
             exit 1
           fi
-          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" "dist/$BINARY_NAME"
+          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "dist/$BINARY_NAME"
           codesign --verify --strict --verbose=2 "dist/$BINARY_NAME"
           mkdir -p artifacts
           ditto -c -k --keepParent "dist/$BINARY_NAME" "artifacts/$BINARY_NAME-macos-arm64.zip"
-          xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
-            --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER_ID" \
-            --wait
+          if [[ -n "${APPLE_API_KEY_ID:-}" && -n "${APPLE_API_ISSUER_ID:-}" && -f "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" ]]; then
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
+              --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER_ID" \
+              --wait
+          elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_ID_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+          else
+            echo "::error::Missing notarization credentials. Configure APPLE_API_KEY_* secrets or APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID."
+            exit 1
+          fi
           xcrun stapler staple "artifacts/$BINARY_NAME-macos-arm64.zip" || \
             echo "::notice::Notarization succeeded; zip stapling is not required for this CLI artifact."
       - uses: actions/upload-artifact@v4
