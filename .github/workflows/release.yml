@@ -54,7 +54,7 @@ jobs:
               text = text.replace("__CLI_VERSION__", release_tag)
               text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
               template.write_text(text)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -125,7 +125,7 @@ jobs:
               text = text.replace("__CLI_VERSION__", release_tag)
               text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
               template.write_text(text)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
