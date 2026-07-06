@@ -30,6 +30,30 @@ jobs:
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
+      - name: Stamp release version
+        shell: python
+        run: |
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          version_file = Path("src/api/aws/misc/version_controller.py")
+          version_text = version_file.read_text()
+          version_text = version_text.replace(
+              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
+              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
+          )
+          version_file.write_text(version_text)
+
+          for template in Path("src/api/templates").glob("*.yaml"):
+              text = template.read_text()
+              text = text.replace("__TEMPLATE_VERSION__", release_tag)
+              text = text.replace("__CLI_VERSION__", release_tag)
+              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
+              template.write_text(text)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -77,6 +101,30 @@ jobs:
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
+      - name: Stamp release version
+        shell: python
+        run: |
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          version_file = Path("src/api/aws/misc/version_controller.py")
+          version_text = version_file.read_text()
+          version_text = version_text.replace(
+              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
+              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
+          )
+          version_file.write_text(version_text)
+
+          for template in Path("src/api/templates").glob("*.yaml"):
+              text = template.read_text()
+              text = text.replace("__TEMPLATE_VERSION__", release_tag)
+              text = text.replace("__CLI_VERSION__", release_tag)
+              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
+              template.write_text(text)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
