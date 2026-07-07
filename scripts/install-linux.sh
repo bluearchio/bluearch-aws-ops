@@ -35,18 +35,16 @@ require_command() {
 release_base_url() {
   local repo="$1"
   local version="$2"
-  if [[ "$version" == "latest" ]]; then
-    printf 'https://github.com/%s/releases/latest/download' "$repo"
-  else
-    printf 'https://github.com/%s/releases/download/%s' "$repo" "$version"
-  fi
+  local project="${repo##*/}"
+  local dist_base="${BLUEARCH_DIST_BASE_URL:-https://dist.bluearch.io}"
+  printf '%s/releases/%s/%s' "${dist_base%/}" "$project" "$version"
 }
 
 download_file() {
   local url="$1"
   local output="$2"
   local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-  if [[ -n "$token" ]]; then
+  if [[ -n "$token" && "$url" == https://github.com/* ]]; then
     curl -fsSL -H "Authorization: Bearer ${token}" "$url" -o "$output"
   else
     curl -fsSL "$url" -o "$output"
