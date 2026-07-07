@@ -19,9 +19,9 @@ This repo is not the shared runtime. It does not own account context, shared per
 brew tap bluearchio/tap
 brew install bluearchio/tap/bluearch-aws-core
 brew install bluearchio/tap/bluearch-aws-ops
-bluearch-core start --daemon
-bluearch scan
-bluearch recommendations
+bluearch-aws-core start --daemon
+bluearch-aws-ops scan
+bluearch-aws-ops recommendations
 ```
 
 Linux:
@@ -29,12 +29,13 @@ Linux:
 ```bash
 curl -fsSL https://dist.bluearch.io/install/bluearch-aws-ops.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
-bluearch-core start --daemon
-bluearch scan
-bluearch recommendations
+bluearch-aws-core start --daemon
+bluearch-aws-ops scan
+bluearch-aws-ops recommendations
 ```
 
-The Linux installer installs `bluearch-core` automatically if it is missing.
+The Linux installer installs `bluearch-aws-core` automatically if it is missing.
+`bluearch` is also installed as a shorter compatibility command.
 
 From source:
 
@@ -42,9 +43,9 @@ From source:
 python -m venv .venv
 . .venv/bin/activate
 pip install -e .
-bluearch-core start --daemon
-bluearch scan
-bluearch web start
+bluearch-aws-core start --daemon
+bluearch-aws-ops scan
+bluearch-aws-ops web start
 ```
 
 ## Local Development
