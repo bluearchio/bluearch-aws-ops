@@ -24,6 +24,18 @@ bluearch scan
 bluearch recommendations
 ```
 
+Linux:
+
+```bash
+curl -fsSL https://dist.bluearch.io/install/bluearch-aws-ops.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+bluearch-core start --daemon
+bluearch scan
+bluearch recommendations
+```
+
+The Linux installer installs `bluearch-core` automatically if it is missing.
+
 From source:
 
 ```bash
