@@ -3,17 +3,15 @@ set -euo pipefail
 
 APP_NAME="BlueArch AWS Ops"
 REPO="bluearchio/bluearch-aws-ops"
-BINARY_NAME="bluearch"
-ALIAS_NAME="bluearch-aws-ops"
-ASSET_NAME="bluearch-linux-x86_64.tar.gz"
+BINARY_NAME="bluearch-aws-ops"
+ASSET_NAME="bluearch-aws-ops-linux-x86_64.tar.gz"
 VERSION="${BLUEARCH_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 CORE_APP_NAME="BlueArch AWS Core"
 CORE_REPO="bluearchio/bluearch-aws-core"
-CORE_BINARY_NAME="bluearch-core"
-CORE_ALIAS_NAME="bluearch-aws-core"
-CORE_ASSET_NAME="bluearch-core-linux-x86_64.tar.gz"
+CORE_BINARY_NAME="bluearch-aws-core"
+CORE_ASSET_NAME="bluearch-aws-core-linux-x86_64.tar.gz"
 CORE_VERSION="${BLUEARCH_CORE_VERSION:-latest}"
 CORE_INSTALL_POLICY="${BLUEARCH_INSTALL_CORE:-missing}"
 
@@ -73,7 +71,6 @@ install_release() {
   local version="$3"
   local asset_name="$4"
   local binary_name="$5"
-  local alias_name="${6:-}"
   local base_url
   local tmp_dir
 
@@ -100,10 +97,6 @@ install_release() {
 
   mkdir -p "$INSTALL_DIR"
   install -m 0755 "$extracted_binary" "${INSTALL_DIR}/${binary_name}"
-  if [[ -n "$alias_name" ]]; then
-    ln -sfn "$binary_name" "${INSTALL_DIR}/${alias_name}"
-    log "Installed ${alias_name} alias to ${INSTALL_DIR}/${alias_name}"
-  fi
   rm -rf "$tmp_dir"
   log "Installed ${binary_name} to ${INSTALL_DIR}/${binary_name}"
 }
@@ -129,11 +122,11 @@ require_command install
 
 case "$CORE_INSTALL_POLICY" in
   always)
-    install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME" "$CORE_ALIAS_NAME"
+    install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME"
     ;;
   missing)
     if ! binary_available "$CORE_BINARY_NAME"; then
-      install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME" "$CORE_ALIAS_NAME"
+      install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME"
     fi
     ;;
   skip)
@@ -141,7 +134,7 @@ case "$CORE_INSTALL_POLICY" in
   *) fail "Invalid BLUEARCH_INSTALL_CORE value: ${CORE_INSTALL_POLICY}. Use missing, always, or skip." ;;
 esac
 
-install_release "$APP_NAME" "$REPO" "$VERSION" "$ASSET_NAME" "$BINARY_NAME" "$ALIAS_NAME"
+install_release "$APP_NAME" "$REPO" "$VERSION" "$ASSET_NAME" "$BINARY_NAME"
 
 if ! command -v "$BINARY_NAME" >/dev/null 2>&1; then
   case ":$PATH:" in
@@ -150,5 +143,5 @@ if ! command -v "$BINARY_NAME" >/dev/null 2>&1; then
   esac
 fi
 
-log "Start core with: ${CORE_ALIAS_NAME} start --daemon"
-log "Run the CLI with: ${ALIAS_NAME} --help"
+log "Start core with: ${CORE_BINARY_NAME} start --daemon"
+log "Run the CLI with: ${BINARY_NAME} --help"

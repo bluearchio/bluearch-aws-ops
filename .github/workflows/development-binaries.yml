@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  BINARY_NAME: bluearch
+  BINARY_NAME: bluearch-aws-ops
 
 jobs:
   build-unsigned:

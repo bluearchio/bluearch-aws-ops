@@ -94,10 +94,10 @@ Tagged releases are published from GitHub Actions after Linux and signed/notariz
 ```bash
 sha256sum -c SHA256SUMS
 # macOS: shasum -a 256 -c SHA256SUMS
-gh attestation verify bluearch-linux-x86_64.tar.gz --repo bluearchio/bluearch-aws-ops
+gh attestation verify bluearch-aws-ops-linux-x86_64.tar.gz --repo bluearchio/bluearch-aws-ops
 ```
 
-For macOS, verify `bluearch-macos-arm64.zip` with `gh attestation verify`.
+For macOS, verify `bluearch-aws-ops-macos-arm64.zip` with `gh attestation verify`.
 
 Release workflows also open a pull request against `bluearchio/homebrew-tap` to update `bluearch-aws-ops`. Configure `HOMEBREW_TAP_TOKEN_2` before cutting a public tag.
 

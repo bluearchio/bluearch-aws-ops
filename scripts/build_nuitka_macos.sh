@@ -2,12 +2,12 @@
 
 set -euo pipefail
 
-BINARY_NAME="${BINARY_NAME:-bluearch}"
+BINARY_NAME="${BINARY_NAME:-bluearch-aws-ops}"
 SOURCE_ROOT="${SOURCE_ROOT:-src/api}"
 ENTRY_IMPORT="${ENTRY_IMPORT:-bluearch}"
 APP_OBJECT="${APP_OBJECT:-run}"
 if [ -z "${ONEFILE_TEMPDIR:-}" ]; then
-  ONEFILE_TEMPDIR="{HOME}/.bluearch/bin"
+  ONEFILE_TEMPDIR="{HOME}/.bluearch-aws-ops/bin"
 fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

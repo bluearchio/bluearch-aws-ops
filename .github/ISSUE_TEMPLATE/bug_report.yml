@@ -24,7 +24,7 @@ body:
     id: version
     attributes:
       label: Version
-      placeholder: bluearch --version
+      placeholder: bluearch-aws-ops --version
   - type: textarea
     id: environment
     attributes:

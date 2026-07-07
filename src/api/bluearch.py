@@ -78,7 +78,7 @@ cli_app = Typer(
         "  [green]logs[/green]                     Scan CloudWatch Logs for errors + AI root-cause\n"
         "  [green]alarm[/green]                    Configure CloudWatch alarms with SNS/Slack\n"
         "  [green]web[/green]                      Launch browser-based dashboard\n\n"
-        "[dim]Run [cyan]bluearch interactive[/cyan] for a guided menu, or [cyan]bluearch -h[/cyan] for full command list[/dim]"
+        "[dim]Run [cyan]bluearch-aws-ops interactive[/cyan] for a guided menu, or [cyan]bluearch-aws-ops -h[/cyan] for full command list[/dim]"
     ),
     rich_markup_mode="rich",
     add_completion=True,
@@ -96,47 +96,47 @@ def _show_main_help():
     console.print("[dim]AWS infrastructure recommendations and alerting[/dim]")
     console.print()
     console.print("[bold cyan]Quick Start:[/bold cyan]")
-    console.print("  bluearch scan                  Scan AWS resources (no setup needed)")
-    console.print("  bluearch recommendations       View findings")
-    console.print("  bluearch-core start --daemon   Launch core and web dashboards")
+    console.print("  bluearch-aws-ops scan                  Scan AWS resources (no setup needed)")
+    console.print("  bluearch-aws-ops recommendations       View findings")
+    console.print("  bluearch-aws-core start --daemon       Launch core and web dashboards")
     console.print()
     console.print("[bold cyan]Scan & Analyze:[/bold cyan]")
-    console.print("  bluearch scan                  Collect resources locally (14 services)")
-    console.print("  bluearch scan -s ec2,rds       Scan specific services")
-    console.print("  bluearch scan --skip-scan      Reuse recent data")
-    console.print("  bluearch recommendations       List recommendations (filterable)")
-    console.print("  bluearch recommendation-types  List recommendation types found")
+    console.print("  bluearch-aws-ops scan                  Collect resources locally (14 services)")
+    console.print("  bluearch-aws-ops scan -s ec2,rds       Scan specific services")
+    console.print("  bluearch-aws-ops scan --skip-scan      Reuse recent data")
+    console.print("  bluearch-aws-ops recommendations       List recommendations (filterable)")
+    console.print("  bluearch-aws-ops recommendation-types  List recommendation types found")
     console.print()
     console.print("[bold cyan]Alerting:[/bold cyan]")
-    console.print("  bluearch alarm                 Configure CloudWatch alarms")
-    console.print("  bluearch alarm --config-targets  Manage notification targets (email/Slack)")
+    console.print("  bluearch-aws-ops alarm                 Configure CloudWatch alarms")
+    console.print("  bluearch-aws-ops alarm --config-targets  Manage notification targets (email/Slack)")
     console.print()
     console.print("[bold cyan]Log Analysis:[/bold cyan]")
-    console.print("  bluearch logs scan             Scan CloudWatch Logs for error patterns")
-    console.print("  bluearch logs errors           View log analysis findings")
-    console.print("  bluearch logs analyze ID       AI root-cause analysis on a finding")
+    console.print("  bluearch-aws-ops logs scan             Scan CloudWatch Logs for error patterns")
+    console.print("  bluearch-aws-ops logs errors           View log analysis findings")
+    console.print("  bluearch-aws-ops logs analyze ID       AI root-cause analysis on a finding")
     console.print()
     console.print("[bold cyan]Web Dashboard:[/bold cyan]")
-    console.print("  bluearch-core start --daemon   Start core and web dashboards")
-    console.print("  bluearch web stop              Stop the dashboard")
+    console.print("  bluearch-aws-core start --daemon       Start core and web dashboards")
+    console.print("  bluearch-aws-ops web stop              Stop the dashboard")
     console.print()
     console.print("[bold cyan]Setup & Config:[/bold cyan]")
-    console.print("  bluearch setup wizard          Guided setup wizard")
-    console.print("  bluearch setup assume-role     Configure assume-role authentication")
-    console.print("  bluearch setup multi-account   Deploy cross-account StackSet")
-    console.print("  bluearch optin-hub             Enable AWS services at org level")
-    console.print("  bluearch setup alarms          Manage custom alarms")
-    console.print("  bluearch setup validate        Check AWS credentials & permissions")
-    console.print("  bluearch setup multi-account --status  Show StackSet deployment status")
+    console.print("  bluearch-aws-ops setup wizard          Guided setup wizard")
+    console.print("  bluearch-aws-ops setup assume-role     Configure assume-role authentication")
+    console.print("  bluearch-aws-ops setup multi-account   Deploy cross-account StackSet")
+    console.print("  bluearch-aws-ops optin-hub             Enable AWS services at org level")
+    console.print("  bluearch-aws-ops setup alarms          Manage custom alarms")
+    console.print("  bluearch-aws-ops setup validate        Check AWS credentials & permissions")
+    console.print("  bluearch-aws-ops setup multi-account --status  Show StackSet deployment status")
     console.print()
-    console.print("[dim]Run [cyan]bluearch -h[/cyan] for full command list, or [cyan]bluearch interactive[/cyan] for a guided menu[/dim]")
+    console.print("[dim]Run [cyan]bluearch-aws-ops -h[/cyan] for full command list, or [cyan]bluearch-aws-ops interactive[/cyan] for a guided menu[/dim]")
     console.print()
 
 
 def _ensure_core_for_command(ctx: Context) -> None:
     """Require a compatible core runtime for product commands.
 
-    `bluearch update` is intentionally exempt so users can repair or install
+    `bluearch-aws-ops update` is intentionally exempt so users can repair or install
     the required core runtime through the product updater.
     """
     if ctx.invoked_subcommand in (None, "update", "web"):
@@ -146,13 +146,13 @@ def _ensure_core_for_command(ctx: Context) -> None:
     try:
         from utils.core_client import MINIMUM_CORE_VERSION, check_core_dependency
 
-        check_core_dependency("bluearch")
+        check_core_dependency("bluearch-aws-ops")
     except Exception as exc:
-        console.print("[red]bluearch-core is required before using BlueArch CLI commands.[/red]")
+        console.print("[red]bluearch-aws-core is required before using BlueArch AWS Ops commands.[/red]")
         console.print(f"[dim]{exc}[/dim]")
-        console.print(f"[cyan]Required version:[/cyan] bluearch-core >= {MINIMUM_CORE_VERSION}")
-        console.print("[cyan]Install or update it with:[/cyan] bluearch update")
-        console.print("[cyan]Start it with:[/cyan] bluearch-core start --daemon")
+        console.print(f"[cyan]Required version:[/cyan] bluearch-aws-core >= {MINIMUM_CORE_VERSION}")
+        console.print("[cyan]Install or update it with:[/cyan] bluearch-aws-ops update")
+        console.print("[cyan]Start it with:[/cyan] bluearch-aws-core start --daemon")
         raise Exit(1)
 
 
@@ -194,7 +194,7 @@ def main(
             pass
 
         # Default: show help. Users who want the interactive menu can run
-        # `bluearch interactive` explicitly.
+        # `bluearch-aws-ops interactive` explicitly.
         _show_main_help()
 
 
@@ -231,7 +231,7 @@ def register_commands():
         """Launch interactive guided menu.
 
         [green]Example:[/green]
-          bluearch interactive
+          bluearch-aws-ops interactive
         """
         from cli.interactive import run_interactive_menu
         run_interactive_menu()

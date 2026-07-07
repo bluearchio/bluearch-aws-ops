@@ -27,7 +27,6 @@ classifiers = [
 
 [project.scripts]
 bluearch-aws-ops = "bluearch:run"
-bluearch = "bluearch:run"
 
 [tool.setuptools]
 package-dir = {"" = "src/api"}
