@@ -30,11 +30,12 @@ MANAGED_DASHBOARD_PORTS = (8095, 8096)
 APP_PROCESS_MARKERS = (
     "bluearch.py",
     "bluearch-aws-ops web start",
-    "bluearch web start",
     "web.app:create_app",
     "tag_manager_cli",
     "tag-manager web start",
 )
+LEGACY_OPS_PROCESS_MARKERS = ("bluearch web start",)
+PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
 
 
 class _DefaultStartGroup(typer.core.TyperGroup):
@@ -236,16 +237,24 @@ def _stop_known_web_servers(target_port: int) -> None:
     pids.update(_listener_pids(target_port))
 
     stopped = []
+    legacy_conflicts = []
     for pid in sorted(pids):
         if pid == os.getpid() or not _is_process_alive(pid):
             continue
-        if _is_bluearch_or_tag_manager_process(pid):
+        if _is_legacy_ops_process(pid):
+            legacy_conflicts.append(pid)
+        elif _is_bluearch_or_tag_manager_process(pid):
             _terminate_process(pid)
             stopped.append(pid)
 
     if stopped:
         console.print(
             f"[yellow]Stopped existing BlueArch/Tag Manager web process(es): {', '.join(map(str, stopped))}[/yellow]"
+        )
+    if legacy_conflicts:
+        console.print(
+            "[yellow]Legacy BlueArch dashboard migration conflict detected for process(es): "
+            f"{', '.join(map(str, legacy_conflicts))}. Stop or migrate them manually.[/yellow]"
         )
     _remove_stale_pid_files()
 
@@ -278,6 +287,11 @@ def _listener_pids(port: int) -> set[int]:
 def _is_bluearch_or_tag_manager_process(pid: int) -> bool:
     cmdline = _process_cmdline(pid).lower()
     return any(marker in cmdline for marker in APP_PROCESS_MARKERS)
+
+
+def _is_legacy_ops_process(pid: int) -> bool:
+    cmdline = _process_cmdline(pid).lower()
+    return any(marker in cmdline for marker in LEGACY_OPS_PROCESS_MARKERS)
 
 
 def _process_cmdline(pid: int) -> str:
@@ -494,18 +508,12 @@ def _test_host(host: str) -> str:
 def _find_cli_executable() -> Optional[str]:
     """Find the user-facing CLI launcher instead of assuming sys.executable works."""
     candidates = [
-        sys.argv[0] if os.path.basename(sys.argv[0]) == "bluearch-aws-ops" else None,
-        shutil.which("bluearch-aws-ops"),
-        os.path.join(os.path.expanduser("~"), ".local", "bin", "bluearch-aws-ops"),
-        "/opt/homebrew/bin/bluearch-aws-ops",
-        "/usr/local/bin/bluearch-aws-ops",
+        sys.argv[0] if os.path.basename(sys.argv[0]) == PUBLIC_OPS_EXECUTABLE else None,
+        shutil.which(PUBLIC_OPS_EXECUTABLE),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", PUBLIC_OPS_EXECUTABLE),
+        f"/opt/homebrew/bin/{PUBLIC_OPS_EXECUTABLE}",
+        f"/usr/local/bin/{PUBLIC_OPS_EXECUTABLE}",
     ]
-
-    # In PyInstaller/Nuitka onefile builds, sys.executable is the app binary.
-    # In packaged installs it can point at a bundled Python file that is
-    # not executable, which is the failure mode this resolver avoids.
-    if not _is_packaged_runtime() and not _looks_like_python_executable(sys.executable):
-        candidates.append(sys.executable)
 
     for candidate in candidates:
         if not candidate:
@@ -514,8 +522,16 @@ def _find_cli_executable() -> Optional[str]:
             path = candidate
         else:
             path = shutil.which(candidate)
-        if path and os.path.isfile(path) and os.access(path, os.X_OK):
-            return os.path.realpath(os.path.abspath(path))
+        if not path:
+            continue
+        resolved = os.path.realpath(os.path.abspath(path))
+        if (
+            os.path.basename(path) != PUBLIC_OPS_EXECUTABLE
+            or os.path.basename(resolved) != PUBLIC_OPS_EXECUTABLE
+        ):
+            continue
+        if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
+            return resolved
     return None
 
 

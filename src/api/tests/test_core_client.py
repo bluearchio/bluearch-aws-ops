@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from utils import core_client
 
 
@@ -43,3 +45,43 @@ def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch)
 
     assert core_client.get_installed_core_version() == "0.2.6"
     assert commands == [[public_core, "--version"]]
+
+
+@pytest.mark.parametrize("legacy_override", ["bluearch", "bluearch-core"])
+def test_core_override_rejects_bare_legacy_names_but_accepts_public_and_custom_paths(
+    monkeypatch, tmp_path, legacy_override
+):
+    """Catches executing a legacy override while preserving supported custom launchers."""
+    custom_core = tmp_path / "company-core-launcher"
+    custom_core.write_text("#!/bin/sh\n")
+    custom_core.chmod(0o755)
+    public_core = tmp_path / "bluearch-aws-core"
+    public_core.write_text("#!/bin/sh\n")
+    public_core.chmod(0o755)
+
+    monkeypatch.setattr(core_client.shutil, "which", lambda name: None)
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", legacy_override)
+    assert core_client._find_core_executable() is None
+
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(public_core))
+    assert core_client._find_core_executable() == str(public_core)
+
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(custom_core))
+    assert core_client._find_core_executable() == str(custom_core)
+
+
+def test_core_resolver_rejects_public_named_symlink_to_legacy_target(monkeypatch, tmp_path):
+    """Catches a public Core filename masking a bluearch-core target."""
+    legacy_core = tmp_path / "bluearch-core"
+    legacy_core.write_text("#!/bin/sh\n")
+    legacy_core.chmod(0o755)
+    public_symlink = tmp_path / "bluearch-aws-core"
+    public_symlink.symlink_to(legacy_core)
+
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(public_symlink))
+    monkeypatch.setattr(core_client.shutil, "which", lambda name: str(public_symlink))
+
+    assert core_client._find_core_executable() is None
+
+    monkeypatch.delenv("BLUEARCH_CORE_BINARY")
+    assert core_client._find_core_executable() is None

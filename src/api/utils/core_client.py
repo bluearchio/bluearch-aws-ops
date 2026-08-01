@@ -114,9 +114,18 @@ def check_core_dependency(app_name: str = "bluearch", minimum_version: str | Non
 def _find_core_executable() -> str | None:
     """Return the public Core executable without launching legacy aliases."""
     configured = os.environ.get("BLUEARCH_CORE_BINARY")
-    if configured and Path(configured).name == "bluearch-aws-core":
-        return configured
-    return shutil.which("bluearch-aws-core")
+    if configured:
+        return configured if not _is_legacy_core_executable(configured) else None
+    discovered = shutil.which("bluearch-aws-core")
+    return discovered if discovered and not _is_legacy_core_executable(discovered) else None
+
+
+def _is_legacy_core_executable(path: str) -> bool:
+    legacy_names = {"bluearch", "bluearch-core"}
+    try:
+        return Path(path).name in legacy_names or Path(os.path.realpath(path)).name in legacy_names
+    except OSError:
+        return True
 
 
 def get_installed_core_version() -> str | None:

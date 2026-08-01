@@ -185,6 +185,67 @@ def test_find_cli_executable_uses_public_name_not_legacy_conflict(monkeypatch, t
     assert web._find_cli_executable() == os.fspath(public_launcher)
 
 
+def test_find_cli_executable_rejects_public_named_symlink_to_legacy_binary(monkeypatch, tmp_path, packaged_runtime):
+    """Catches a public filename masking a legacy executable target."""
+    legacy_launcher = tmp_path / "bluearch"
+    legacy_launcher.write_text("#!/bin/sh\n")
+    legacy_launcher.chmod(0o755)
+    public_symlink = tmp_path / "bluearch-aws-ops"
+    public_symlink.symlink_to(legacy_launcher)
+    bundled_python = tmp_path / "python"
+    bundled_python.write_text("# not executable\n")
+    bundled_python.chmod(0o644)
+    real_isfile = web.os.path.isfile
+
+    monkeypatch.setattr(sys, "argv", [str(public_symlink)])
+    monkeypatch.setattr(sys, "executable", str(bundled_python))
+    monkeypatch.setattr(web.shutil, "which", lambda command: None)
+    monkeypatch.setattr(
+        web.os.path,
+        "isfile",
+        lambda path: real_isfile(path) if os.fspath(path).startswith(os.fspath(tmp_path)) else False,
+    )
+
+    assert web._find_cli_executable() is None
+
+
+def test_find_cli_executable_never_selects_arbitrary_sys_executable(monkeypatch, tmp_path):
+    """Catches fallback that spawns an unrelated executable as Ops."""
+    arbitrary_executable = tmp_path / "custom-launcher"
+    arbitrary_executable.write_text("#!/bin/sh\n")
+    arbitrary_executable.chmod(0o755)
+    real_isfile = web.os.path.isfile
+
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(sys, "argv", ["not-bluearch-aws-ops"])
+    monkeypatch.setattr(sys, "executable", str(arbitrary_executable))
+    monkeypatch.setattr(web.shutil, "which", lambda command: None)
+    monkeypatch.setattr(
+        web.os.path,
+        "isfile",
+        lambda path: real_isfile(path) if os.fspath(path).startswith(os.fspath(tmp_path)) else False,
+    )
+
+    assert web._find_cli_executable() is None
+
+
+def test_legacy_listener_is_reported_without_termination(monkeypatch, capsys):
+    """Catches managed startup killing a legacy dashboard instead of flagging it."""
+    terminated = []
+
+    monkeypatch.setattr(web, "_read_pid_file", lambda path: None)
+    monkeypatch.setattr(web, "_listener_pids", lambda port: {4321})
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: True)
+    monkeypatch.setattr(web, "_process_cmdline", lambda pid: "bluearch web start --daemon")
+    monkeypatch.setattr(web, "_terminate_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(web, "_remove_stale_pid_files", lambda: None)
+
+    web._stop_known_web_servers(8095)
+
+    assert terminated == []
+    assert "migration conflict" in capsys.readouterr().out.lower()
+
+
 def test_daemon_child_skips_single_instance_guard(monkeypatch):
     started = {}
 
