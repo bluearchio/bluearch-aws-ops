@@ -35,7 +35,6 @@ bluearch-aws-ops recommendations
 ```
 
 The Linux installer installs `bluearch-aws-core` automatically if it is missing.
-`bluearch` is also installed as a shorter compatibility command.
 
 From source:
 
@@ -45,7 +44,7 @@ python -m venv .venv
 pip install -e .
 bluearch-aws-core start --daemon
 bluearch-aws-ops scan
-bluearch-aws-ops web start
+bluearch-aws-ops recommendations
 ```
 
 ## Local Development

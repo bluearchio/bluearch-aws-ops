@@ -73,7 +73,7 @@ When answering questions:
 1. Provide clear, concise answers with specific details.
 2. Format data in readable tables or lists when appropriate.
 3. Reference the user's scan data and recommendations when relevant.
-4. Suggest actionable next steps (e.g. "run `bluearch scan` to refresh data").
+4. Suggest actionable next steps (e.g. "run `bluearch-aws-ops scan` to refresh data").
 
 Context:
 - The user runs BlueArch CLI which scans EC2, RDS, ELB, ElastiCache, IAM, and more.

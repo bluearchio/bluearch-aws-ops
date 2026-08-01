@@ -17,10 +17,10 @@ setup_app = typer.Typer(
     help=(
         "[bold]Setup & Configuration[/bold] -- validate credentials, manage profiles, inspect database.\n\n"
         "[green]Examples:[/green]\n"
-        "  bluearch setup wizard       Guided first-time setup\n"
-        "  bluearch setup validate     Check AWS credentials and IAM permissions\n"
-        "  bluearch setup aws-profile  Select AWS profile interactively\n"
-        "  bluearch setup database     Show database status\n"
+        "  bluearch-aws-ops setup wizard       Guided first-time setup\n"
+        "  bluearch-aws-ops setup validate     Check AWS credentials and IAM permissions\n"
+        "  bluearch-aws-ops setup aws-profile  Select AWS profile interactively\n"
+        "  bluearch-aws-ops setup database     Show database status\n"
     ),
     no_args_is_help=False,
     rich_markup_mode="rich",
@@ -49,14 +49,14 @@ def setup_help(ctx: typer.Context):
         console.print("  alarms         Manage custom alarms for recommendations")
         console.print()
         console.print("[bold cyan]TYPICAL WORKFLOW:[/bold cyan]")
-        console.print("  1. setup wizard                       # Complete interactive setup")
-        console.print("  2. setup validate                     # Verify everything works")
-        console.print("  3. scan                               # Scan AWS resources")
-        console.print("  4. show-recommendations               # View findings")
+        console.print("  1. bluearch-aws-ops setup wizard      # Complete interactive setup")
+        console.print("  2. bluearch-aws-ops setup validate    # Verify everything works")
+        console.print("  3. bluearch-aws-ops scan              # Scan AWS resources")
+        console.print("  4. bluearch-aws-ops recommendations   # View findings")
         console.print()
         console.print("[bold cyan]MULTI-ACCOUNT SETUP (AWS Organizations):[/bold cyan]")
-        console.print("  setup assume-role --deploy             # Deploy IAM role via CloudFormation")
-        console.print("  setup multi-account --complete         # Deploy cross-account infrastructure")
+        console.print("  bluearch-aws-ops setup assume-role --deploy      # Deploy IAM role via CloudFormation")
+        console.print("  bluearch-aws-ops setup multi-account --complete  # Deploy cross-account infrastructure")
         console.print()
 
 
@@ -69,7 +69,7 @@ def wizard():
 
 @setup_app.command()
 def validate():
-    """Check setup status through bluearch-core."""
+    """Check setup status through bluearch-aws-core."""
     console.print()
     console.print("[bold]Validating AWS Configuration[/bold]")
     console.print()
@@ -79,7 +79,7 @@ def validate():
             request_core("GET", "/api/v1/setup/validate", timeout=15.0)
         )
     except Exception as exc:
-        console.print(f"  [red]>> bluearch-core setup validation unavailable: {exc}[/red]")
+        console.print(f"  [red]>> bluearch-aws-core setup validation unavailable: {exc}[/red]")
         raise typer.Exit(1)
 
     table = Table(show_header=True, header_style="bold cyan")
@@ -97,7 +97,7 @@ def validate():
 
     console.print()
     if result["overall"] in {"healthy", "ok"}:
-        console.print("[green]Setup validation passed through bluearch-core[/green]")
+        console.print("[green]Setup validation passed through bluearch-aws-core[/green]")
     else:
         console.print(f"[yellow]Setup status: {result['overall']}[/yellow]")
         raise typer.Exit(1)
@@ -228,7 +228,7 @@ def database():
     console.print("[bold]Database Status[/bold]")
     console.print()
     console.print(f"  Path:     [cyan]{db_path}[/cyan]")
-    console.print(f"  Runtime:  [cyan]bluearch-core[/cyan]")
+    console.print(f"  Runtime:  [cyan]bluearch-aws-core[/cyan]")
 
     if db_path and os.path.exists(db_path):
         size_mb = os.path.getsize(db_path) / (1024 * 1024)
@@ -261,8 +261,8 @@ def _submit_core_setup_job(
     )
     job_id = job.get("job_id") or job.get("id")
     if not job_id:
-        raise RuntimeError(f"bluearch-core did not return a job id for {action}")
-    console.print(f"[cyan]{action} started in bluearch-core (job {job_id})[/cyan]")
+        raise RuntimeError(f"bluearch-aws-core did not return a job id for {action}")
+    console.print(f"[cyan]{action} started in bluearch-aws-core (job {job_id})[/cyan]")
     return _wait_for_core_setup_job(str(job_id), action, timeout_seconds=timeout_seconds)
 
 
@@ -286,7 +286,7 @@ def _wait_for_core_setup_job(job_id: str, action: str, *, timeout_seconds: int =
         if job.get("status") == "failed":
             raise RuntimeError(job.get("error") or message or f"{action} failed")
         time.sleep(3)
-    raise RuntimeError(f"Timed out waiting for bluearch-core job {job_id}")
+    raise RuntimeError(f"Timed out waiting for bluearch-aws-core job {job_id}")
 
 
 def _parse_csv_option(value: Optional[str]) -> list[str] | None:
@@ -350,10 +350,10 @@ def setup_assume_role(
     """Configure assume-role authentication for BlueArch CLI.
 
     [green]Examples:[/green]
-      bluearch setup assume-role --status          # Show current config
-      bluearch setup assume-role --deploy           # Deploy IAM role via CloudFormation
-      bluearch setup assume-role --show-url         # Get quick-create URL for manual deploy
-      bluearch setup assume-role --disable          # Switch back to direct credentials
+      bluearch-aws-ops setup assume-role --status          # Show current config
+      bluearch-aws-ops setup assume-role --deploy           # Deploy IAM role via CloudFormation
+      bluearch-aws-ops setup assume-role --show-url         # Get quick-create URL for manual deploy
+      bluearch-aws-ops setup assume-role --disable          # Switch back to direct credentials
     """
     if status:
         _show_assume_role_status()
@@ -373,10 +373,10 @@ def setup_assume_role(
 
     _show_assume_role_status()
     console.print()
-    console.print("[dim]Setup implementation is owned by bluearch-core.[/dim]")
-    console.print("  Deploy/update: [cyan]bluearch setup assume-role --deploy[/cyan]")
-    console.print("  Manual URL:    [cyan]bluearch setup assume-role --show-url[/cyan]")
-    console.print("  Disable:       [cyan]bluearch setup assume-role --disable[/cyan]")
+    console.print("[dim]Setup implementation is owned by bluearch-aws-core.[/dim]")
+    console.print("  Deploy/update: [cyan]bluearch-aws-ops setup assume-role --deploy[/cyan]")
+    console.print("  Manual URL:    [cyan]bluearch-aws-ops setup assume-role --show-url[/cyan]")
+    console.print("  Disable:       [cyan]bluearch-aws-ops setup assume-role --disable[/cyan]")
 
 
 def _show_assume_role_status():
@@ -386,12 +386,12 @@ def _show_assume_role_status():
     try:
         status = request_core("GET", "/api/v1/assume-role/status", timeout=10.0)
     except Exception as exc:
-        console.print(f"[red]bluearch-core assume-role status unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core assume-role status unavailable: {exc}[/red]")
         raise typer.Exit(1)
     configs = _list_assume_role_configs()
     if not configs:
         console.print("[dim]No assume-role configurations found.[/dim]")
-        console.print("[dim]Run [cyan]bluearch setup assume-role --deploy[/cyan] to set one up.[/dim]")
+        console.print("[dim]Run [cyan]bluearch-aws-ops setup assume-role --deploy[/cyan] to set one up.[/dim]")
 
     if configs:
         table = Table(title="Assume Role Configurations", show_header=True, header_style="bold cyan")
@@ -444,7 +444,7 @@ def _show_quick_create_url(role_name: str, external_id: Optional[str]):
     if trust_mode == "SpecificArn":
         specific_arn = Prompt.ask("Specific IAM ARN")
     if trust_mode == "CurrentUser" and not user_arn:
-        console.print("[yellow]bluearch-core could not resolve the current user ARN; using AnyPrincipal instead.[/yellow]")
+        console.print("[yellow]bluearch-aws-core could not resolve the current user ARN; using AnyPrincipal instead.[/yellow]")
         trust_mode = "AnyPrincipal"
 
     # Build quick-create URL
@@ -478,7 +478,7 @@ def _show_quick_create_url(role_name: str, external_id: Optional[str]):
         f"3. Check 'I acknowledge that AWS CloudFormation might create IAM resources'\n"
         f"4. Click 'Create stack'\n"
         f"5. Wait for CREATE_COMPLETE\n"
-        f"6. Run: [cyan]bluearch setup assume-role[/cyan] to configure\n\n"
+        f"6. Run: [cyan]bluearch-aws-ops setup assume-role[/cyan] to configure\n\n"
         f"[link={url}]{url}[/link]",
         title="CloudFormation Quick-Create",
         border_style="cyan",
@@ -486,7 +486,7 @@ def _show_quick_create_url(role_name: str, external_id: Optional[str]):
 
 
 def _deploy_assume_role_stack(role_name: str, external_id: Optional[str], force: bool):
-    """Deploy the assume-role stack through bluearch-core."""
+    """Deploy the assume-role stack through bluearch-aws-core."""
     from rich.prompt import Prompt, Confirm
 
     console.print()
@@ -522,13 +522,13 @@ def _deploy_assume_role_stack(role_name: str, external_id: Optional[str], force:
             timeout_seconds=900,
         )
     except Exception as e:
-        console.print(f"[red]Failed to deploy assume-role through bluearch-core: {e}[/red]")
+        console.print(f"[red]Failed to deploy assume-role through bluearch-aws-core: {e}[/red]")
         raise typer.Exit(1)
 
     if result.get("role_arn"):
         console.print(f"  Role ARN: [cyan]{result['role_arn']}[/cyan]")
     console.print()
-    console.print("[green]Assume-role deployed and configured by bluearch-core[/green]")
+    console.print("[green]Assume-role deployed and configured by bluearch-aws-core[/green]")
 
 
 def _disable_assume_role(delete_stack: bool, force: bool):
@@ -550,7 +550,7 @@ def _disable_assume_role(delete_stack: bool, force: bool):
             timeout_seconds=600,
         )
     except Exception as e:
-        console.print(f"[red]Failed to disable assume-role through bluearch-core: {e}[/red]")
+        console.print(f"[red]Failed to disable assume-role through bluearch-aws-core: {e}[/red]")
         raise typer.Exit(1)
     console.print(f"[green]{result.get('message') or 'Assume role disabled'}[/green]")
 
@@ -559,7 +559,7 @@ def _list_assume_role_configs() -> List[dict]:
     try:
         return request_core("GET", "/api/v1/assume-role/configs", timeout=10.0) or []
     except Exception as exc:
-        console.print(f"[red]bluearch-core assume-role configs unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core assume-role configs unavailable: {exc}[/red]")
         raise typer.Exit(1)
 
 
@@ -567,7 +567,7 @@ def _get_core_template_metadata(template_name: str) -> dict:
     try:
         return request_core("GET", f"/api/v1/system/templates/{template_name}", timeout=10.0) or {}
     except Exception as exc:
-        console.print(f"[red]bluearch-core template registry unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core template registry unavailable: {exc}[/red]")
         raise typer.Exit(1)
 
 
@@ -654,12 +654,12 @@ def multi_account_setup(
     """Deploy cross-account infrastructure via AWS CloudFormation StackSets.
 
     [green]Examples:[/green]
-      bluearch setup multi-account --status              # Check deployment status
-      bluearch setup multi-account --complete             # Full automated setup
-      bluearch setup multi-account --accounts 111,222     # Deploy to specific accounts
-      bluearch setup multi-account --ous ou-abcd-1234     # Deploy to specific OUs
-      bluearch setup multi-account --update               # Update to latest template
-      bluearch setup multi-account --remove               # Remove all infrastructure
+      bluearch-aws-ops setup multi-account --status              # Check deployment status
+      bluearch-aws-ops setup multi-account --complete             # Full automated setup
+      bluearch-aws-ops setup multi-account --accounts 111,222     # Deploy to specific accounts
+      bluearch-aws-ops setup multi-account --ous ou-abcd-1234     # Deploy to specific OUs
+      bluearch-aws-ops setup multi-account --update               # Update to latest template
+      bluearch-aws-ops setup multi-account --remove               # Remove all infrastructure
     """
     console.print()
     console.print("[bold]Multi-Account Setup[/bold]")
@@ -668,7 +668,7 @@ def multi_account_setup(
     try:
         validation = request_core("GET", "/api/v1/accounts/validate", timeout=15.0)
     except Exception as exc:
-        console.print(f"[red]bluearch-core account validation unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core account validation unavailable: {exc}[/red]")
         raise typer.Exit(1)
 
     current_account = validation.get("current_account_id") or "-"
@@ -709,7 +709,7 @@ def multi_account_setup(
     try:
         status_payload = request_core("GET", "/api/v1/accounts/status", timeout=15.0)
     except Exception as exc:
-        console.print(f"[red]bluearch-core account status unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core account status unavailable: {exc}[/red]")
         raise typer.Exit(1)
 
     console.print()
@@ -761,7 +761,7 @@ def multi_account_setup(
                 timeout_seconds=1800,
             )
     except Exception as exc:
-        console.print(f"[red]Deployment failed through bluearch-core: {exc}[/red]")
+        console.print(f"[red]Deployment failed through bluearch-aws-core: {exc}[/red]")
         raise typer.Exit(1)
 
     deployed_accounts = result.get("deployed_accounts") or []
@@ -776,7 +776,7 @@ def multi_account_setup(
     if synced_accounts is not None:
         console.print(f"[green]{synced_accounts} account target(s) synced in core storage[/green]")
     console.print("[green]Multi-account setup complete.[/green]")
-    console.print("[dim]Run [cyan]bluearch setup multi-account --status[/cyan] to check deployment progress.[/dim]")
+    console.print("[dim]Run [cyan]bluearch-aws-ops setup multi-account --status[/cyan] to check deployment progress.[/dim]")
 
 
 def _show_stackset_status():
@@ -784,7 +784,7 @@ def _show_stackset_status():
     try:
         status_payload = request_core("GET", "/api/v1/accounts/status", timeout=15.0)
     except Exception as exc:
-        console.print(f"[red]bluearch-core account status unavailable: {exc}[/red]")
+        console.print(f"[red]bluearch-aws-core account status unavailable: {exc}[/red]")
         raise typer.Exit(1)
     _print_core_stackset_status(status_payload)
 
@@ -804,7 +804,7 @@ def _remove_multi_account(force: bool):
             timeout_seconds=1800,
         )
     except Exception as exc:
-        console.print(f"[red]Failed to remove cross-account infrastructure through bluearch-core: {exc}[/red]")
+        console.print(f"[red]Failed to remove cross-account infrastructure through bluearch-aws-core: {exc}[/red]")
         raise typer.Exit(1)
 
     console.print()
@@ -825,7 +825,7 @@ def setup_optin_hub():
     or a delegated administrator.
 
     [green]Examples:[/green]
-      bluearch setup optin-hub
+      bluearch-aws-ops setup optin-hub
     """
     from cli.opt_in_central import optin_hub
     optin_hub()
@@ -849,10 +849,10 @@ def setup_alarms(
     for quick CLI actions (list, delete, force-evaluate) and pipelines.
 
     [green]Examples:[/green]
-      bluearch setup alarms --list
-      bluearch setup alarms --evaluate-all
-      bluearch setup alarms --delete <alarm-id>
-      bluearch-core start --daemon # Then open /setup/alarms in browser
+      bluearch-aws-ops setup alarms --list
+      bluearch-aws-ops setup alarms --evaluate-all
+      bluearch-aws-ops setup alarms --delete <alarm-id>
+      bluearch-aws-core start --daemon # Then open /setup/alarms in browser
     """
     if delete:
         alarm = _get_alarm_config(delete)
@@ -913,7 +913,7 @@ def setup_alarms(
     if not alarms:
         console.print("[dim]No custom alarms configured yet.[/dim]")
         console.print(
-            "[dim]Create one in the web UI: [cyan]bluearch-core start --daemon[/cyan] then open "
+            "[dim]Create one in the web UI: [cyan]bluearch-aws-core start --daemon[/cyan] then open "
             "[cyan]/setup/alarms[/cyan].[/dim]"
         )
         return
@@ -945,7 +945,7 @@ def setup_alarms(
     console.print(table)
     console.print(
         "[dim]Create/edit alarms in the web UI at [cyan]/setup/alarms[/cyan] "
-        "([cyan]bluearch-core start --daemon[/cyan]).[/dim]"
+        "([cyan]bluearch-aws-core start --daemon[/cyan]).[/dim]"
     )
 
 

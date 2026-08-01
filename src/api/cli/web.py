@@ -1,9 +1,9 @@
 """Web dashboard CLI commands — start, stop, status with daemon support.
 
 Usage:
-    bluearch-core start --daemon
-    bluearch web stop
-    bluearch web status
+    bluearch-aws-core start --daemon
+    bluearch-aws-ops web stop
+    bluearch-aws-ops web status
 """
 
 import os
@@ -29,6 +29,7 @@ LOG_DIR = os.path.join(PID_DIR, "logs")
 MANAGED_DASHBOARD_PORTS = (8095, 8096)
 APP_PROCESS_MARKERS = (
     "bluearch.py",
+    "bluearch-aws-ops web start",
     "bluearch web start",
     "web.app:create_app",
     "tag_manager_cli",
@@ -37,7 +38,7 @@ APP_PROCESS_MARKERS = (
 
 
 class _DefaultStartGroup(typer.core.TyperGroup):
-    """Keeps legacy `bluearch web --daemon` routed to the managed-start warning."""
+    """Routes direct options to the hidden Core-managed start command."""
 
     def parse_args(self, ctx, args):
         if args and args[0].startswith("-") and args[0] not in ("-h", "--help"):
@@ -50,8 +51,8 @@ web_app = typer.Typer(
     help=(
         "[bold]Web Dashboard[/bold] -- browser-based UI for BlueArch CLI.\n\n"
         "[green]Quick Start:[/green]\n"
-        "  bluearch-core start --daemon  Start core and available web dashboards\n"
-        "  bluearch web stop             Stop the BlueArch dashboard\n"
+        "  bluearch-aws-core start --daemon  Start core and available web dashboards\n"
+        "  bluearch-aws-ops web stop         Stop the BlueArch dashboard\n"
     ),
     no_args_is_help=False,
     rich_markup_mode="rich",
@@ -66,19 +67,19 @@ def web_help(ctx: typer.Context):
         console.print("[bold]Web Dashboard[/bold] - Browser-based UI for BlueArch CLI")
         console.print()
         console.print("[bold cyan]SERVER:[/bold cyan]")
-        console.print("  start          Managed by bluearch-core")
+        console.print("  Managed by bluearch-aws-core")
         console.print("  stop           Stop the running server")
         console.print("  status         Show server status")
         console.print()
         console.print("[bold cyan]QUICK START:[/bold cyan]")
-        console.print("  1. bluearch-core start --daemon     # Start core and available web dashboards")
+        console.print("  1. bluearch-aws-core start --daemon     # Start core and available web dashboards")
         console.print("  2. Open http://localhost:8095 in your browser")
         console.print()
-        console.print("[dim]The dashboard is local-only and uses the bluearch-core service token.[/dim]")
+        console.print("[dim]The dashboard is local-only and uses the bluearch-aws-core service token.[/dim]")
         console.print()
 
 
-@web_app.command()
+@web_app.command(hidden=True)
 def start(
     port: int = typer.Option(8095, "--port", "-p", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
@@ -159,8 +160,8 @@ def status():
 def _ensure_core_managed_start() -> None:
     if os.environ.get("BLUEARCH_CORE_MANAGED_WEB_START") == "1":
         return
-    console.print("[yellow]BlueArch web startup is managed by bluearch-core.[/yellow]")
-    console.print("[cyan]Run:[/cyan] bluearch-core start --daemon")
+    console.print("[yellow]BlueArch web startup is managed by bluearch-aws-core.[/yellow]")
+    console.print("[cyan]Run:[/cyan] bluearch-aws-core start --daemon")
     raise typer.Exit(1)
 
 
@@ -173,7 +174,7 @@ def _resolve_start_port(host: str, preferred: int) -> int:
         console.print(
             f"[red]Port {preferred} is still in use by a non-BlueArch/Tag Manager process.[/red]"
         )
-        console.print("[dim]Stop that process and run `bluearch-core start --daemon` again.[/dim]")
+        console.print("[dim]Stop that process and run `bluearch-aws-core start --daemon` again.[/dim]")
         raise typer.Exit(1)
     return _find_available_port(host, preferred)
 
@@ -182,12 +183,12 @@ def _ensure_core_dependency() -> None:
     try:
         from utils.core_client import MINIMUM_CORE_VERSION, check_core_dependency
 
-        check_core_dependency("bluearch")
+        check_core_dependency("bluearch-aws-ops")
     except Exception as exc:
-        console.print("[red]bluearch-core is required before starting the BlueArch web dashboard.[/red]")
+        console.print("[red]bluearch-aws-core is required before starting the BlueArch web dashboard.[/red]")
         console.print(f"[dim]{exc}[/dim]")
-        console.print(f"[cyan]Required version:[/cyan] bluearch-core >= {MINIMUM_CORE_VERSION}")
-        console.print("[cyan]Start it with:[/cyan] bluearch-core start --daemon")
+        console.print(f"[cyan]Required version:[/cyan] bluearch-aws-core >= {MINIMUM_CORE_VERSION}")
+        console.print("[cyan]Start it with:[/cyan] bluearch-aws-core start --daemon")
         console.print("[cyan]Install it with:[/cyan] brew install bluearchio/tap/bluearch-aws-core")
         raise typer.Exit(1)
 
@@ -419,7 +420,7 @@ def _build_daemon_command(host: str, port: int, log_level: str) -> list[str]:
         cli_executable = _find_cli_executable()
         if cli_executable is None:
             console.print("[red]Unable to find an executable BlueArch CLI launcher for daemon mode.[/red]")
-            console.print("[dim]Run `bluearch-core start --daemon` to start the managed dashboard.[/dim]")
+            console.print("[dim]Run `bluearch-aws-core start --daemon` to start the managed dashboard.[/dim]")
             raise typer.Exit(1)
         return [
             cli_executable,
@@ -493,11 +494,11 @@ def _test_host(host: str) -> str:
 def _find_cli_executable() -> Optional[str]:
     """Find the user-facing CLI launcher instead of assuming sys.executable works."""
     candidates = [
-        sys.argv[0],
-        shutil.which("bluearch"),
-        os.path.join(os.path.expanduser("~"), ".local", "bin", "bluearch"),
-        "/opt/homebrew/bin/bluearch",
-        "/usr/local/bin/bluearch",
+        sys.argv[0] if os.path.basename(sys.argv[0]) == "bluearch-aws-ops" else None,
+        shutil.which("bluearch-aws-ops"),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "bluearch-aws-ops"),
+        "/opt/homebrew/bin/bluearch-aws-ops",
+        "/usr/local/bin/bluearch-aws-ops",
     ]
 
     # In PyInstaller/Nuitka onefile builds, sys.executable is the app binary.

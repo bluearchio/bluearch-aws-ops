@@ -1,4 +1,4 @@
-"""Client helpers for the local bluearch-core runtime."""
+"""Client helpers for the local bluearch-aws-core runtime."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ DEFAULT_CORE_URL = "http://127.0.0.1:8094"
 DEFAULT_CORE_PORT = 8094
 DEFAULT_TOKEN_PATH = Path.home() / ".bluearch-core" / "runtime" / "api-token"
 # Release-owned product requirement. Bump this only when the BlueArch CLI starts
-# using a bluearch-core API or behavior that older core versions do not support.
-DEFAULT_MINIMUM_CORE_VERSION = "0.1.4"
+# using a bluearch-aws-core API or behavior that older core versions do not support.
+DEFAULT_MINIMUM_CORE_VERSION = "0.2.6"
 MINIMUM_CORE_VERSION = os.environ.get("BLUEARCH_MINIMUM_CORE_VERSION", DEFAULT_MINIMUM_CORE_VERSION)
 PROD_CORE_INSTALL_URL = "brew install bluearchio/tap/bluearch-aws-core"
 DEV_CORE_INSTALL_URL = "pipx install -e ../bluearch-aws-core"
@@ -50,8 +50,8 @@ def read_service_token() -> str:
         return token_path.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise CoreRuntimeError(
-            f"bluearch-core service token was not found at {token_path}. "
-            "Start bluearch-core first with `bluearch-core start --daemon`."
+            f"bluearch-aws-core service token was not found at {token_path}. "
+            "Start bluearch-aws-core first with `bluearch-aws-core start --daemon`."
         ) from exc
 
 
@@ -78,9 +78,9 @@ def request_core_response(
     try:
         response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
     except requests.RequestException as exc:
-        raise CoreRuntimeError(f"bluearch-core is not reachable at {get_core_url()}: {exc}") from exc
+        raise CoreRuntimeError(f"bluearch-aws-core is not reachable at {get_core_url()}: {exc}") from exc
     if raise_for_status and response.status_code >= 400:
-        raise CoreRuntimeError(f"bluearch-core request failed: {response.status_code} {response.text}")
+        raise CoreRuntimeError(f"bluearch-aws-core request failed: {response.status_code} {response.text}")
     return response
 
 
@@ -111,9 +111,17 @@ def check_core_dependency(app_name: str = "bluearch", minimum_version: str | Non
     return status
 
 
+def _find_core_executable() -> str | None:
+    """Return the public Core executable without launching legacy aliases."""
+    configured = os.environ.get("BLUEARCH_CORE_BINARY")
+    if configured and Path(configured).name == "bluearch-aws-core":
+        return configured
+    return shutil.which("bluearch-aws-core")
+
+
 def get_installed_core_version() -> str | None:
-    """Return the installed bluearch-core binary version, if the binary exists."""
-    binary = os.environ.get("BLUEARCH_CORE_BINARY") or shutil.which("bluearch-core")
+    """Return the installed bluearch-aws-core binary version, if it exists."""
+    binary = _find_core_executable()
     if not binary:
         return None
     try:
@@ -155,11 +163,11 @@ def _format_core_update_message(app_name: str, status: dict[str, Any], minimum_v
     core_version = status.get("core_version") or "unknown"
     app_label = app_name.replace("-", " ")
     return (
-        f"bluearch-core {core_version} is too old for {app_label}. "
+        f"bluearch-aws-core {core_version} is too old for {app_label}. "
         f"Required version: >= {minimum_version}. "
         "Install or update BlueArch Core with your installer, or with Homebrew: "
         "`brew install bluearchio/tap/bluearch-aws-core`; then restart it with "
-        "`bluearch-core start --daemon`."
+        "`bluearch-aws-core start --daemon`."
     )
 
 

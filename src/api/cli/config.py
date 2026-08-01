@@ -5,12 +5,12 @@ def delete():
     [deprecated] Delete the CloudFormation stack.
 
     This command is deprecated. BlueArch CLI no longer requires a CloudFormation
-    deployment. Use 'bluearch scan' for local scanning instead.
+    deployment. Use 'bluearch-aws-ops scan' for local scanning instead.
     """
     from utils.display_utils import print_warning
     print_warning(
         "The 'delete' command is deprecated. BlueArch CLI no longer requires "
-        "a CloudFormation deployment. All scanning runs locally via 'bluearch scan'."
+        "a CloudFormation deployment. All scanning runs locally via 'bluearch-aws-ops scan'."
     )
     return
     # Legacy CloudFormation logic preserved below for reference
@@ -61,7 +61,7 @@ def delete():
 
 def show_accounts_and_regions():
     """
-    Displays the collected Account IDs and Regions from bluearch-core.
+    Displays the collected Account IDs and Regions from bluearch-aws-core.
     """
     from rich.console import Console
     from rich.table import Table
@@ -71,7 +71,7 @@ def show_accounts_and_regions():
     accounts = DatabaseManager().get_accounts_and_regions()
 
     if not accounts:
-        console.print("[yellow]No accounts found. Run [cyan]bluearch scan[/cyan] first.[/yellow]")
+        console.print("[yellow]No accounts found. Run [cyan]bluearch-aws-ops scan[/cyan] first.[/yellow]")
         return
 
     table = Table(title="Accounts & Regions", show_header=True, header_style="bold cyan")
@@ -105,11 +105,11 @@ def update(
       - Source install: reinstall from the local checkout
 
     [green]Examples:[/green]
-      bluearch update              # Update to latest version
-      bluearch update --check      # Check for updates without installing
-      bluearch update --force      # Update without confirmation
-      bluearch update --dev        # Development channel (curl only)
-      bluearch update --yes        # Unattended (skip if already up to date)
+      bluearch-aws-ops update              # Update to latest version
+      bluearch-aws-ops update --check      # Check for updates without installing
+      bluearch-aws-ops update --force      # Update without confirmation
+      bluearch-aws-ops update --dev        # Development channel (curl only)
+      bluearch-aws-ops update --yes        # Unattended (skip if already up to date)
     """
     import subprocess
     from pathlib import Path
@@ -131,10 +131,10 @@ def update(
     )
 
     def detect_homebrew_installation() -> dict:
-        """Return info about a Homebrew-installed bluearch binary, if any."""
+        """Return info about a Homebrew-installed public Ops binary, if any."""
         locations = {
-            "homebrew_arm": Path("/opt/homebrew/bin/bluearch"),
-            "homebrew_intel": Path("/usr/local/bin/bluearch"),
+            "homebrew_arm": Path("/opt/homebrew/bin/bluearch-aws-ops"),
+            "homebrew_intel": Path("/usr/local/bin/bluearch-aws-ops"),
         }
         for install_type, path in locations.items():
             if not path.exists():
@@ -171,7 +171,7 @@ def update(
         return {"installed": False}
 
     def perform_homebrew_core_update(required_core_version: str) -> bool:
-        console.print(f"[dim]Ensuring bluearch-core >= {required_core_version}...[/dim]")
+        console.print(f"[dim]Ensuring bluearch-aws-core >= {required_core_version}...[/dim]")
         installed = subprocess.run(
             ["brew", "list", "--versions", "bluearch-aws-core"],
             capture_output=True,
@@ -189,7 +189,7 @@ def update(
         console.print("[dim]Updating Homebrew tap...[/dim]")
         subprocess.run(["brew", "update"], capture_output=True, text=True, timeout=120)
         if not perform_homebrew_core_update(required_core_version):
-            console.print("[red]bluearch-core update failed. BlueArch CLI update was not started.[/red]")
+            console.print("[red]bluearch-aws-core update failed. BlueArch CLI update was not started.[/red]")
             return False
         console.print("[dim]Upgrading bluearch-aws-ops...[/dim]")
         result = subprocess.run(
@@ -201,7 +201,7 @@ def update(
         from utils.core_client import core_install_url
 
         install_url = core_install_url(development_channel)
-        console.print(f"\n[blue]Ensuring bluearch-core >= {required_core_version}...[/blue]")
+        console.print(f"\n[blue]Ensuring bluearch-aws-core >= {required_core_version}...[/blue]")
         cmd = install_url
         console.print(f"[dim]Executing: {cmd}[/dim]")
         result = subprocess.run(cmd.split(), capture_output=False, text=True)
@@ -299,7 +299,7 @@ def update(
                     console.print("\n[blue]Checking for Homebrew updates...[/blue]")
                     try:
                         result = subprocess.run(
-                            ["brew", "outdated", "bluearch"],
+                            ["brew", "outdated", "bluearch-aws-ops"],
                             capture_output=True, text=True, timeout=30,
                         )
                         if result.stdout.strip():
@@ -323,7 +323,7 @@ def update(
 
                 if perform_homebrew_update(required_core_version):
                     console.print("\n[green]Update completed successfully![/green]")
-                    console.print("\nRun [cyan]bluearch --version[/cyan] to verify the new version.")
+                    console.print("\nRun [cyan]bluearch-aws-ops --version[/cyan] to verify the new version.")
                 else:
                     console.print("[red]Homebrew update failed. Try manually: brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/red]")
                     raise typer.Exit(1)
@@ -359,13 +359,13 @@ def update(
 
             if check:
                 if updates:
-                    console.print("\nTo update: [cyan]bluearch update[/cyan]")
+                    console.print("\nTo update: [cyan]bluearch-aws-ops update[/cyan]")
                 return
 
             if not force and not yes:
                 console.print("\n[yellow]This will update BlueArch CLI to the latest version.[/yellow]")
                 console.print("[dim]This will:[/dim]")
-                console.print(f"[dim]  - Install or update bluearch-core to >= {required_core_version}[/dim]")
+                console.print(f"[dim]  - Install or update bluearch-aws-core to >= {required_core_version}[/dim]")
                 console.print("[dim]  - Download and install the latest binary[/dim]")
                 console.print("[dim]  - Preserve your database (automatic backup)[/dim]")
                 console.print("[dim]  - Run any necessary database migrations[/dim]")
@@ -390,7 +390,7 @@ def update(
                     "\nYou may need to restart your terminal or run "
                     "[cyan]source ~/.bashrc[/cyan] (or [cyan]source ~/.zshrc[/cyan])"
                 )
-                console.print("\nRun [cyan]bluearch --version[/cyan] to verify the new version.")
+                console.print("\nRun [cyan]bluearch-aws-ops --version[/cyan] to verify the new version.")
             else:
                 console.print("[red]Update failed. Please check the output above for details.[/red]")
                 console.print("[red]You can also try running the installation manually:[/red]")
@@ -415,14 +415,14 @@ def deploy(add_accounts: bool = Option(False, "--add-accounts", help="Add more a
     [deprecated] Start the CloudFormation configuration workflow.
 
     This command is deprecated. BlueArch CLI no longer requires a CloudFormation
-    deployment. Use 'bluearch scan' for local scanning instead.
-    If you need cross-account setup, use 'bluearch setup multi-account'.
+    deployment. Use 'bluearch-aws-ops scan' for local scanning instead.
+    If you need cross-account setup, use 'bluearch-aws-ops setup multi-account'.
     """
     from utils.display_utils import print_warning
     print_warning(
         "The 'deploy' command is deprecated. BlueArch CLI no longer requires "
-        "a CloudFormation deployment. Use 'bluearch scan' for local scanning, "
-        "or 'bluearch setup multi-account' for cross-account configuration."
+        "a CloudFormation deployment. Use 'bluearch-aws-ops scan' for local scanning, "
+        "or 'bluearch-aws-ops setup multi-account' for cross-account configuration."
     )
     return
     # Legacy CloudFormation logic preserved below for reference

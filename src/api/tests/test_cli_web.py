@@ -15,7 +15,7 @@ def packaged_runtime(monkeypatch):
 
 
 def test_daemon_command_uses_cli_launcher_when_packaged(monkeypatch, tmp_path, packaged_runtime):
-    launcher = tmp_path / "bluearch"
+    launcher = tmp_path / "bluearch-aws-ops"
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
 
@@ -44,7 +44,7 @@ def test_daemon_command_uses_cli_launcher_when_packaged(monkeypatch, tmp_path, p
 
 
 def test_daemon_command_uses_cli_launcher_when_sys_executable_is_not_python(monkeypatch, tmp_path):
-    launcher = tmp_path / "bluearch"
+    launcher = tmp_path / "bluearch-aws-ops"
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
 
@@ -64,7 +64,7 @@ def test_daemon_command_uses_cli_launcher_when_sys_executable_is_not_python(monk
 
 
 def test_daemon_command_uses_cli_launcher_for_nuitka_onefile_runtime(monkeypatch, tmp_path):
-    launcher = tmp_path / "bluearch"
+    launcher = tmp_path / "bluearch-aws-ops"
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
 
@@ -97,7 +97,7 @@ def test_daemon_command_uses_cli_launcher_for_nuitka_onefile_runtime(monkeypatch
 
 
 def test_daemon_command_resolves_relative_cli_launcher(monkeypatch, tmp_path, packaged_runtime):
-    launcher = tmp_path / "src" / "api" / "dist" / "bluearch"
+    launcher = tmp_path / "src" / "api" / "dist" / "bluearch-aws-ops"
     launcher.parent.mkdir(parents=True)
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
@@ -107,7 +107,7 @@ def test_daemon_command_resolves_relative_cli_launcher(monkeypatch, tmp_path, pa
     bundled_python.chmod(0o644)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["./src/api/dist/bluearch"])
+    monkeypatch.setattr(sys, "argv", ["./src/api/dist/bluearch-aws-ops"])
     monkeypatch.setattr(sys, "executable", str(bundled_python))
     monkeypatch.setattr(web.shutil, "which", lambda command: None)
 
@@ -162,10 +162,13 @@ def test_daemon_cwd_uses_source_api_dir_for_python_runtime(monkeypatch):
     assert web._daemon_cwd().endswith(os.path.join("src", "api"))
 
 
-def test_find_cli_executable_can_use_path_lookup(monkeypatch, tmp_path, packaged_runtime):
-    launcher = tmp_path / "bluearch"
-    launcher.write_text("#!/bin/sh\n")
-    launcher.chmod(0o755)
+def test_find_cli_executable_uses_public_name_not_legacy_conflict(monkeypatch, tmp_path, packaged_runtime):
+    public_launcher = tmp_path / "bluearch-aws-ops"
+    public_launcher.write_text("#!/bin/sh\n")
+    public_launcher.chmod(0o755)
+    legacy_launcher = tmp_path / "bluearch"
+    legacy_launcher.write_text("#!/bin/sh\n")
+    legacy_launcher.chmod(0o755)
 
     bundled_python = tmp_path / "python"
     bundled_python.write_text("# not executable\n")
@@ -173,9 +176,13 @@ def test_find_cli_executable_can_use_path_lookup(monkeypatch, tmp_path, packaged
 
     monkeypatch.setattr(sys, "argv", ["bluearch"])
     monkeypatch.setattr(sys, "executable", str(bundled_python))
-    monkeypatch.setattr(web.shutil, "which", lambda command: str(launcher) if command == "bluearch" else None)
+    monkeypatch.setattr(
+        web.shutil,
+        "which",
+        lambda command: str(public_launcher) if command == "bluearch-aws-ops" else str(legacy_launcher) if command == "bluearch" else None,
+    )
 
-    assert web._find_cli_executable() == os.fspath(launcher)
+    assert web._find_cli_executable() == os.fspath(public_launcher)
 
 
 def test_daemon_child_skips_single_instance_guard(monkeypatch):

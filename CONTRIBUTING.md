@@ -19,7 +19,7 @@ npm ci
 Start core first:
 
 ```bash
-bluearch-core start --daemon
+bluearch-aws-core start --daemon
 ```
 
 Run the backend:
