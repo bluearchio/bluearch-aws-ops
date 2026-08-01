@@ -17,13 +17,15 @@ This repo is not the shared runtime. It does not own account context, shared per
 
 Trust the Core and Ops formulas individually before installation. Formula-specific trust approves only those formulas,
 which is narrower in scope than trusting the entire tap.
+`brew install bluearchio/tap/bluearch-aws-ops` installs Core automatically because the Ops formula declares
+`depends_on "bluearch-aws-core"`. That is why both exact formulas are trusted, but only Ops is installed explicitly.
 
 ```bash
 brew tap bluearchio/tap
 brew trust --formula bluearchio/tap/bluearch-aws-core
 brew trust --formula bluearchio/tap/bluearch-aws-ops
 brew install bluearchio/tap/bluearch-aws-ops
-bluearch-aws-core start
+bluearch-aws-core start --daemon
 bluearch-aws-ops scan
 bluearch-aws-ops recommendations
 ```
