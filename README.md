@@ -15,11 +15,15 @@ This repo is not the shared runtime. It does not own account context, shared per
 
 ## Install
 
+Trust the Core and Ops formulas individually before installation. Formula-specific trust approves only those formulas,
+which is narrower in scope than trusting the entire tap.
+
 ```bash
 brew tap bluearchio/tap
-brew install bluearchio/tap/bluearch-aws-core
+brew trust --formula bluearchio/tap/bluearch-aws-core
+brew trust --formula bluearchio/tap/bluearch-aws-ops
 brew install bluearchio/tap/bluearch-aws-ops
-bluearch-aws-core start --daemon
+bluearch-aws-core start
 bluearch-aws-ops scan
 bluearch-aws-ops recommendations
 ```
