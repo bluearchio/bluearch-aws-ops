@@ -85,3 +85,45 @@ def test_core_resolver_rejects_public_named_symlink_to_legacy_target(monkeypatch
 
     monkeypatch.delenv("BLUEARCH_CORE_BINARY")
     assert core_client._find_core_executable() is None
+
+
+def test_core_bare_public_override_rejects_path_symlink_to_legacy_target(monkeypatch, tmp_path):
+    """Catches subprocess PATH resolution bypassing the Core legacy-target guard."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    legacy_core = bin_dir / "bluearch-core"
+    legacy_core.write_text("#!/bin/sh\n")
+    legacy_core.chmod(0o755)
+    public_symlink = bin_dir / "bluearch-aws-core"
+    public_symlink.symlink_to(legacy_core)
+    commands = []
+
+    class Result:
+        stdout = "BlueArch Core v0.2.6"
+        stderr = ""
+
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", "bluearch-aws-core")
+    monkeypatch.setattr(
+        core_client.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append(command) or Result(),
+    )
+
+    assert core_client.get_installed_core_version() is None
+    assert commands == []
+
+
+@pytest.mark.parametrize("override_name", ["bluearch-aws-core", "company-core-launcher"])
+def test_core_bare_nonlegacy_override_resolves_to_path(monkeypatch, tmp_path, override_name):
+    """Catches accepting a valid bare override without normalizing its executable path."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executable = bin_dir / override_name
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
+
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", override_name)
+
+    assert core_client._find_core_executable() == str(executable)

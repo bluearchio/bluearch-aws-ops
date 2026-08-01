@@ -115,9 +115,18 @@ def _find_core_executable() -> str | None:
     """Return the public Core executable without launching legacy aliases."""
     configured = os.environ.get("BLUEARCH_CORE_BINARY")
     if configured:
-        return configured if not _is_legacy_core_executable(configured) else None
+        resolved = _resolve_core_executable(configured)
+        if not resolved or _is_legacy_core_executable(configured) or _is_legacy_core_executable(resolved):
+            return None
+        return resolved
     discovered = shutil.which("bluearch-aws-core")
-    return discovered if discovered and not _is_legacy_core_executable(discovered) else None
+    resolved = _resolve_core_executable(discovered) if discovered else None
+    return resolved if resolved and not _is_legacy_core_executable(resolved) else None
+
+
+def _resolve_core_executable(candidate: str) -> str | None:
+    path = candidate if os.path.dirname(candidate) else shutil.which(candidate)
+    return os.path.abspath(path) if path else None
 
 
 def _is_legacy_core_executable(path: str) -> bool:
