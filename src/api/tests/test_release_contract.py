@@ -274,6 +274,34 @@ def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in macos_verifier
 
 
+def test_macos_release_waits_for_notarization_and_checks_the_standalone_cli() -> None:
+    macos_steps = _workflow()["jobs"]["macos"]["steps"]
+    release_commands = next(
+        step["run"]
+        for step in macos_steps
+        if step.get("name") == "Sign, notarize, and verify final macOS archive"
+    )
+    verifier_command = "bash scripts/verify_macos_artifact.sh"
+    before_verifier, separator, after_verifier = release_commands.partition(verifier_command)
+    notarytool_commands = [
+        line.strip()
+        for line in before_verifier.splitlines()
+        if "xcrun notarytool submit" in line
+    ]
+    macos_verifier = (ROOT / "scripts" / "verify_macos_artifact.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert separator == verifier_command
+    assert notarytool_commands
+    assert all("--wait" in command for command in notarytool_commands)
+    assert "xcrun notarytool submit" not in after_verifier
+    assert "codesign --verify" in macos_verifier
+    assert "--check-notarization" in macos_verifier
+    assert '-R="notarized"' in macos_verifier
+    assert "spctl --assess" not in macos_verifier
+
+
 def test_release_generates_sboms_from_final_archives_in_separate_ubuntu_job() -> None:
     jobs = _workflow()["jobs"]
     sbom = jobs["sbom"]
