@@ -68,7 +68,7 @@ def test_daemon_command_uses_cli_launcher_for_nuitka_onefile_runtime(monkeypatch
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
 
-    runtime_dir = tmp_path / ".bluearch" / "bin"
+    runtime_dir = tmp_path / ".bluearch-aws-ops" / "bin"
     runtime_dir.mkdir(parents=True)
     bundled_python = runtime_dir / "python"
     bundled_python.write_text("# internal runtime\n")
@@ -137,6 +137,7 @@ def test_daemon_command_uses_uvicorn_directly_in_source_runtime(monkeypatch):
     assert "uvicorn.run('web.app:create_app'" in cmd[2]
     assert "port=8095" in cmd[2]
     assert "log_level='debug'" in cmd[2]
+    assert cmd[3] == web.OPS_WEB_PROCESS_SENTINEL
 
 
 def test_daemon_child_env_resets_pyinstaller_extraction(monkeypatch, packaged_runtime):
@@ -233,17 +234,131 @@ def test_legacy_listener_is_reported_without_termination(monkeypatch, capsys):
     """Catches managed startup killing a legacy dashboard instead of flagging it."""
     terminated = []
 
-    monkeypatch.setattr(web, "_read_pid_file", lambda path: None)
+    monkeypatch.setattr(web, "_read_pid_record", lambda: None)
     monkeypatch.setattr(web, "_listener_pids", lambda port: {4321})
-    monkeypatch.setattr(web, "_is_process_alive", lambda pid: True)
-    monkeypatch.setattr(web, "_process_cmdline", lambda pid: "bluearch web start --daemon")
-    monkeypatch.setattr(web, "_terminate_process", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(
+        web,
+        "_process_snapshot",
+        lambda pid: {
+            "pid": pid,
+            "create_time": 10.0,
+            "cmdline": ("/usr/local/bin/bluearch", "web", "start"),
+            "executable": "/usr/local/bin/bluearch",
+        },
+    )
+    monkeypatch.setattr(web, "_terminate_process", lambda pid, created: terminated.append((pid, created)))
     monkeypatch.setattr(web, "_remove_stale_pid_files", lambda: None)
 
     web._stop_known_web_servers(8095)
 
     assert terminated == []
     assert "migration conflict" in capsys.readouterr().out.lower()
+
+
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        ("/opt/homebrew/bin/bluearch-aws-tags", "web", "start"),
+        ("python", "-m", "uvicorn", "web.app:create_app"),
+        ("uvicorn", "web.app:create_app"),
+        ("/usr/local/bin/bluearch", "web", "start"),
+    ],
+)
+def test_listener_discovery_never_signals_non_public_ops_process(monkeypatch, cmdline):
+    terminated = []
+    monkeypatch.setattr(web, "_read_pid_record", lambda: None)
+    monkeypatch.setattr(web, "_listener_pids", lambda port: {9876})
+    monkeypatch.setattr(
+        web,
+        "_process_snapshot",
+        lambda pid: {"pid": pid, "create_time": 20.0, "cmdline": cmdline, "executable": cmdline[0]},
+    )
+    monkeypatch.setattr(web, "_terminate_process", lambda pid, created: terminated.append((pid, created)))
+    monkeypatch.setattr(web, "_remove_stale_pid_files", lambda: None)
+
+    web._stop_known_web_servers(8095)
+
+    assert terminated == []
+
+
+def test_listener_discovery_signals_exact_public_ops_process(monkeypatch):
+    terminated = []
+    monkeypatch.setattr(web, "_read_pid_record", lambda: None)
+    monkeypatch.setattr(web, "_listener_pids", lambda port: {9876})
+    monkeypatch.setattr(
+        web,
+        "_process_snapshot",
+        lambda pid: {
+            "pid": pid,
+            "create_time": 20.0,
+            "cmdline": ("/opt/homebrew/bin/bluearch-aws-ops", "web", "start", "--daemon"),
+            "executable": "/opt/homebrew/bin/bluearch-aws-ops",
+        },
+    )
+    monkeypatch.setattr(
+        web,
+        "_terminate_process",
+        lambda pid, created: terminated.append((pid, created)) or True,
+    )
+    monkeypatch.setattr(web, "_remove_stale_pid_files", lambda: None)
+
+    web._stop_known_web_servers(8095)
+
+    assert terminated == [(9876, 20.0)]
+
+
+def test_public_argv_with_legacy_executable_target_is_not_signaled(monkeypatch):
+    snapshot = {
+        "pid": 9876,
+        "create_time": 20.0,
+        "cmdline": ("/opt/homebrew/bin/bluearch-aws-ops", "web", "start"),
+        "executable": "/opt/homebrew/Cellar/legacy/bluearch",
+    }
+
+    assert web._snapshot_is_public_ops_web(snapshot) is False
+
+
+def test_terminate_rejects_reused_pid_before_signaling(monkeypatch):
+    signals = []
+    monkeypatch.setattr(
+        web,
+        "_process_snapshot",
+        lambda pid: {
+            "pid": pid,
+            "create_time": 22.0,
+            "cmdline": ("/opt/homebrew/bin/bluearch-aws-ops", "web", "start"),
+            "executable": "/opt/homebrew/bin/bluearch-aws-ops",
+        },
+    )
+    monkeypatch.setattr(web.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+
+    assert web._terminate_process(55, 11.0) is False
+    assert signals == []
+
+
+def test_pid_record_requires_stable_public_ops_identity(monkeypatch, tmp_path):
+    pid_file = tmp_path / "web-server.pid"
+    monkeypatch.setattr(web, "PID_DIR", str(tmp_path))
+    monkeypatch.setattr(web, "PID_FILE", str(pid_file))
+    monkeypatch.setattr(
+        web,
+        "_process_snapshot",
+        lambda pid: {
+            "pid": pid,
+            "create_time": 123.5,
+            "cmdline": ("/opt/homebrew/bin/bluearch-aws-ops", "web", "start"),
+            "executable": "/opt/homebrew/bin/bluearch-aws-ops",
+        },
+    )
+
+    web._write_pid(123)
+
+    assert web._read_pid_record() == {
+        "schema": web.PID_RECORD_SCHEMA,
+        "pid": 123,
+        "create_time": 123.5,
+        "command": "bluearch-aws-ops",
+    }
 
 
 def test_daemon_child_skips_single_instance_guard(monkeypatch):

@@ -397,7 +397,7 @@ def configure_alarms():
             else:
                 console.print(
                     "[yellow]Aborting alarm configuration. "
-                    "Please run 'bluearch populate' before configuring alarms.[/yellow]"
+                    "Please run 'bluearch-aws-ops scan' before configuring alarms.[/yellow]"
                 )
 
         cloudwatch = CloudWatchWrapper()

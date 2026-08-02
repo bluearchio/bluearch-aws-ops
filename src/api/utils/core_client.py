@@ -21,6 +21,7 @@ DEFAULT_MINIMUM_CORE_VERSION = "0.2.6"
 MINIMUM_CORE_VERSION = os.environ.get("BLUEARCH_MINIMUM_CORE_VERSION", DEFAULT_MINIMUM_CORE_VERSION)
 PROD_CORE_INSTALL_URL = "brew install bluearchio/tap/bluearch-aws-core"
 DEV_CORE_INSTALL_URL = "pipx install -e ../bluearch-aws-core"
+PUBLIC_CORE_EXECUTABLE = "bluearch-aws-core"
 
 
 class CoreRuntimeError(RuntimeError):
@@ -112,29 +113,28 @@ def check_core_dependency(app_name: str = "bluearch", minimum_version: str | Non
 
 
 def _find_core_executable() -> str | None:
-    """Return the public Core executable without launching legacy aliases."""
+    """Return only a canonical public Core executable and target."""
     configured = os.environ.get("BLUEARCH_CORE_BINARY")
     if configured:
-        resolved = _resolve_core_executable(configured)
-        if not resolved or _is_legacy_core_executable(configured) or _is_legacy_core_executable(resolved):
-            return None
-        return resolved
-    discovered = shutil.which("bluearch-aws-core")
-    resolved = _resolve_core_executable(discovered) if discovered else None
-    return resolved if resolved and not _is_legacy_core_executable(resolved) else None
+        return _resolve_core_executable(configured)
+    return _resolve_core_executable(PUBLIC_CORE_EXECUTABLE)
 
 
-def _resolve_core_executable(candidate: str) -> str | None:
+def _resolve_core_executable(candidate: str | None) -> str | None:
+    if not candidate or Path(candidate).name != PUBLIC_CORE_EXECUTABLE:
+        return None
     path = candidate if os.path.dirname(candidate) else shutil.which(candidate)
-    return os.path.abspath(path) if path else None
-
-
-def _is_legacy_core_executable(path: str) -> bool:
-    legacy_names = {"bluearch", "bluearch-core"}
+    if not path or Path(path).name != PUBLIC_CORE_EXECUTABLE:
+        return None
     try:
-        return Path(path).name in legacy_names or Path(os.path.realpath(path)).name in legacy_names
+        resolved = os.path.realpath(os.path.abspath(path))
     except OSError:
-        return True
+        return None
+    if Path(resolved).name != PUBLIC_CORE_EXECUTABLE:
+        return None
+    if not os.path.isfile(resolved) or not os.access(resolved, os.X_OK):
+        return None
+    return resolved
 
 
 def get_installed_core_version() -> str | None:
@@ -163,9 +163,7 @@ def core_version_satisfies(version: str | None, minimum_version: str | None = No
 
 
 def core_install_url(development: bool = False) -> str:
-    configured = os.environ.get("BLUEARCH_CORE_INSTALL_URL")
-    if configured:
-        return configured
+    """Return a fixed installer command; arbitrary command overrides are unsafe."""
     return DEV_CORE_INSTALL_URL if development else PROD_CORE_INSTALL_URL
 
 
@@ -183,8 +181,9 @@ def _format_core_update_message(app_name: str, status: dict[str, Any], minimum_v
     return (
         f"bluearch-aws-core {core_version} is too old for {app_label}. "
         f"Required version: >= {minimum_version}. "
-        "Install or update BlueArch Core with your installer, or with Homebrew: "
-        "`brew install bluearchio/tap/bluearch-aws-core`; then restart it with "
+        "With Homebrew, trust and install only the public Core formula: "
+        "`brew trust --formula bluearchio/tap/bluearch-aws-core` then "
+        "`brew install bluearchio/tap/bluearch-aws-core`; restart it with "
         "`bluearch-aws-core start --daemon`."
     )
 

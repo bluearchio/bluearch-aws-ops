@@ -20,17 +20,21 @@ def test_missing_core_token_tells_customers_to_start_the_public_core_command(mon
     assert "bluearch-core start" not in message
 
 
-def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch):
+def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch, tmp_path):
     """Catches fallback to legacy Core binaries when both names are installed."""
-    public_core = "/opt/homebrew/bin/bluearch-aws-core"
-    legacy_core = "/opt/homebrew/bin/bluearch-core"
+    public_core = tmp_path / "bluearch-aws-core"
+    public_core.write_text("#!/bin/sh\n")
+    public_core.chmod(0o755)
+    legacy_core = tmp_path / "bluearch-core"
+    legacy_core.write_text("#!/bin/sh\n")
+    legacy_core.chmod(0o755)
     commands = []
 
     monkeypatch.delenv("BLUEARCH_CORE_BINARY", raising=False)
     monkeypatch.setattr(
         core_client.shutil,
         "which",
-        lambda name: {"bluearch-aws-core": public_core, "bluearch-core": legacy_core}.get(name),
+        lambda name: {"bluearch-aws-core": str(public_core), "bluearch-core": str(legacy_core)}.get(name),
     )
 
     class Result:
@@ -44,14 +48,12 @@ def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch)
     )
 
     assert core_client.get_installed_core_version() == "0.2.6"
-    assert commands == [[public_core, "--version"]]
+    assert commands == [[str(public_core), "--version"]]
 
 
-@pytest.mark.parametrize("legacy_override", ["bluearch", "bluearch-core"])
-def test_core_override_rejects_bare_legacy_names_but_accepts_public_and_custom_paths(
-    monkeypatch, tmp_path, legacy_override
-):
-    """Catches executing a legacy override while preserving supported custom launchers."""
+@pytest.mark.parametrize("unsafe_override", ["bluearch", "bluearch-core", "company-core-launcher"])
+def test_core_override_rejects_legacy_and_arbitrary_launchers(monkeypatch, tmp_path, unsafe_override):
+    """Catches executing a legacy name or arbitrary wrapper through the override."""
     custom_core = tmp_path / "company-core-launcher"
     custom_core.write_text("#!/bin/sh\n")
     custom_core.chmod(0o755)
@@ -60,14 +62,14 @@ def test_core_override_rejects_bare_legacy_names_but_accepts_public_and_custom_p
     public_core.chmod(0o755)
 
     monkeypatch.setattr(core_client.shutil, "which", lambda name: None)
-    monkeypatch.setenv("BLUEARCH_CORE_BINARY", legacy_override)
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", unsafe_override)
     assert core_client._find_core_executable() is None
 
     monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(public_core))
     assert core_client._find_core_executable() == str(public_core)
 
     monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(custom_core))
-    assert core_client._find_core_executable() == str(custom_core)
+    assert core_client._find_core_executable() is None
 
 
 def test_core_resolver_rejects_public_named_symlink_to_legacy_target(monkeypatch, tmp_path):
@@ -114,16 +116,22 @@ def test_core_bare_public_override_rejects_path_symlink_to_legacy_target(monkeyp
     assert commands == []
 
 
-@pytest.mark.parametrize("override_name", ["bluearch-aws-core", "company-core-launcher"])
-def test_core_bare_nonlegacy_override_resolves_to_path(monkeypatch, tmp_path, override_name):
-    """Catches accepting a valid bare override without normalizing its executable path."""
+def test_core_bare_public_override_resolves_to_path(monkeypatch, tmp_path):
+    """Catches accepting the canonical bare override without normalizing its path."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    executable = bin_dir / override_name
+    executable = bin_dir / "bluearch-aws-core"
     executable.write_text("#!/bin/sh\n")
     executable.chmod(0o755)
 
     monkeypatch.setenv("PATH", str(bin_dir))
-    monkeypatch.setenv("BLUEARCH_CORE_BINARY", override_name)
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", "bluearch-aws-core")
 
     assert core_client._find_core_executable() == str(executable)
+
+
+def test_core_install_command_override_is_ignored(monkeypatch):
+    """Catches arbitrary command execution through a legacy install override."""
+    monkeypatch.setenv("BLUEARCH_CORE_INSTALL_URL", "company-installer --run")
+
+    assert core_client.core_install_url() == "brew install bluearchio/tap/bluearch-aws-core"

@@ -6,6 +6,7 @@ Usage:
     bluearch-aws-ops web status
 """
 
+import json
 import os
 import shutil
 import signal
@@ -22,20 +23,15 @@ from rich.console import Console
 
 console = Console()
 
-# PID file for daemon management
-PID_DIR = os.path.join(os.path.expanduser("~"), ".bluearch")
+# Product-specific runtime state prevents one CLI from treating another
+# product's PID file as its own. Existing shared data paths are unchanged.
+PID_DIR = os.path.join(os.path.expanduser("~"), ".bluearch-aws-ops", "runtime")
 PID_FILE = os.path.join(PID_DIR, "web-server.pid")
-LOG_DIR = os.path.join(PID_DIR, "logs")
+LOG_DIR = os.path.join(os.path.expanduser("~"), ".bluearch-aws-ops", "logs")
 MANAGED_DASHBOARD_PORTS = (8095, 8096)
-APP_PROCESS_MARKERS = (
-    "bluearch.py",
-    "bluearch-aws-ops web start",
-    "web.app:create_app",
-    "tag_manager_cli",
-    "tag-manager web start",
-)
-LEGACY_OPS_PROCESS_MARKERS = ("bluearch web start",)
 PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
+OPS_WEB_PROCESS_SENTINEL = "bluearch-aws-ops-managed-web"
+PID_RECORD_SCHEMA = 1
 
 
 class _DefaultStartGroup(typer.core.TyperGroup):
@@ -117,32 +113,23 @@ def start(
 @web_app.command()
 def stop():
     """Stop the web dashboard server."""
-    pid = _read_pid()
-    if pid is None:
+    record = _read_pid_record()
+    if record is None:
+        _remove_pid()
         console.print("[yellow]No running server found.[/yellow]")
         return
 
-    console.print(f"Stopping server (PID {pid})...")
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        console.print("[yellow]Process already gone.[/yellow]")
+    pid = record["pid"]
+    if not _record_matches_process(record):
         _remove_pid()
+        console.print("[yellow]Ignored stale or unrelated Ops server state; no process was signaled.[/yellow]")
         return
 
-    # Wait for graceful shutdown
-    for _ in range(50):
-        try:
-            os.kill(pid, 0)
-            time.sleep(0.1)
-        except ProcessLookupError:
-            break
-    else:
-        console.print("[yellow]Force killing...[/yellow]")
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    console.print(f"Stopping server (PID {pid})...")
+    if not _terminate_process(pid, record["create_time"]):
+        _remove_pid()
+        console.print("[yellow]Process identity changed; no process was signaled.[/yellow]")
+        return
 
     _remove_pid()
     console.print("[green]Server stopped.[/green]")
@@ -190,6 +177,7 @@ def _ensure_core_dependency() -> None:
         console.print(f"[dim]{exc}[/dim]")
         console.print(f"[cyan]Required version:[/cyan] bluearch-aws-core >= {MINIMUM_CORE_VERSION}")
         console.print("[cyan]Start it with:[/cyan] bluearch-aws-core start --daemon")
+        console.print("[cyan]Trust it with:[/cyan] brew trust --formula bluearchio/tap/bluearch-aws-core")
         console.print("[cyan]Install it with:[/cyan] brew install bluearchio/tap/bluearch-aws-core")
         raise typer.Exit(1)
 
@@ -229,27 +217,30 @@ def _is_port_available(host: str, port: int) -> bool:
 
 
 def _stop_known_web_servers(target_port: int) -> None:
-    """Stop only this app's old server plus any app process on target_port."""
-    pids = set()
-    pid = _read_pid_file(PID_FILE)
-    if pid:
-        pids.add(pid)
+    """Stop only positively identified public Ops servers on the target port."""
+    pids: set[int] = set()
+    record = _read_pid_record()
+    if record:
+        pids.add(record["pid"])
     pids.update(_listener_pids(target_port))
 
-    stopped = []
-    legacy_conflicts = []
+    stopped: list[int] = []
+    legacy_conflicts: list[int] = []
     for pid in sorted(pids):
-        if pid == os.getpid() or not _is_process_alive(pid):
+        if pid == os.getpid():
             continue
-        if _is_legacy_ops_process(pid):
+        snapshot = _process_snapshot(pid)
+        if snapshot is None:
+            continue
+        if _snapshot_is_legacy_ops_web(snapshot):
             legacy_conflicts.append(pid)
-        elif _is_bluearch_or_tag_manager_process(pid):
-            _terminate_process(pid)
-            stopped.append(pid)
+        elif _snapshot_is_public_ops_web(snapshot):
+            if _terminate_process(pid, snapshot["create_time"]):
+                stopped.append(pid)
 
     if stopped:
         console.print(
-            f"[yellow]Stopped existing BlueArch/Tag Manager web process(es): {', '.join(map(str, stopped))}[/yellow]"
+            f"[yellow]Stopped existing BlueArch AWS Ops web process(es): {', '.join(map(str, stopped))}[/yellow]"
         )
     if legacy_conflicts:
         console.print(
@@ -284,59 +275,86 @@ def _listener_pids(port: int) -> set[int]:
     return pids
 
 
-def _is_bluearch_or_tag_manager_process(pid: int) -> bool:
-    cmdline = _process_cmdline(pid).lower()
-    return any(marker in cmdline for marker in APP_PROCESS_MARKERS)
-
-
-def _is_legacy_ops_process(pid: int) -> bool:
-    cmdline = _process_cmdline(pid).lower()
-    return any(marker in cmdline for marker in LEGACY_OPS_PROCESS_MARKERS)
-
-
-def _process_cmdline(pid: int) -> str:
+def _process_snapshot(pid: int) -> Optional[dict]:
+    """Return stable process identity data, or None when it cannot be proven."""
     try:
         import psutil
-        return " ".join(psutil.Process(pid).cmdline())
+
+        process = psutil.Process(pid)
+        return {
+            "pid": pid,
+            "create_time": float(process.create_time()),
+            "cmdline": tuple(process.cmdline()),
+            "executable": os.path.realpath(process.exe()),
+        }
     except Exception:
-        try:
-            proc = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return proc.stdout.strip()
-        except Exception:
-            return ""
-
-
-def _terminate_process(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    for _ in range(50):
-        if not _is_process_alive(pid):
-            return
-        time.sleep(0.1)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _read_pid_file(path: str) -> Optional[int]:
-    try:
-        with open(path) as f:
-            return int(f.read().strip())
-    except (FileNotFoundError, ValueError, OSError):
         return None
 
 
+def _snapshot_is_public_ops_web(snapshot: dict) -> bool:
+    """Require an exact public command or the source-runtime sentinel."""
+    cmdline = tuple(str(part) for part in snapshot.get("cmdline", ()))
+    if OPS_WEB_PROCESS_SENTINEL in cmdline:
+        executable = os.path.basename(str(snapshot.get("executable", ""))).lower()
+        return (
+            len(cmdline) == 4
+            and _looks_like_python_executable(executable)
+            and cmdline[1] == "-c"
+            and "uvicorn.run('web.app:create_app'" in cmdline[2]
+            and cmdline[3] == OPS_WEB_PROCESS_SENTINEL
+        )
+    if len(cmdline) < 3:
+        return False
+    executable = os.path.basename(str(snapshot.get("executable", "")))
+    return (
+        os.path.basename(cmdline[0]) == PUBLIC_OPS_EXECUTABLE
+        and executable == PUBLIC_OPS_EXECUTABLE
+        and cmdline[1:3] == ("web", "start")
+    )
+
+
+def _snapshot_is_legacy_ops_web(snapshot: dict) -> bool:
+    cmdline = tuple(str(part) for part in snapshot.get("cmdline", ()))
+    if len(cmdline) < 3:
+        return False
+    return os.path.basename(cmdline[0]) == "bluearch" and cmdline[1:3] == ("web", "start")
+
+
+def _same_process(pid: int, expected_create_time: float) -> Optional[dict]:
+    snapshot = _process_snapshot(pid)
+    if snapshot is None:
+        return None
+    if abs(snapshot["create_time"] - expected_create_time) > 0.001:
+        return None
+    if not _snapshot_is_public_ops_web(snapshot):
+        return None
+    return snapshot
+
+
+def _terminate_process(pid: int, expected_create_time: float) -> bool:
+    """Signal a process only while its stable public-Ops identity still matches."""
+    if _same_process(pid, expected_create_time) is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    for _ in range(50):
+        if not _is_process_alive(pid):
+            return True
+        time.sleep(0.1)
+    if _same_process(pid, expected_create_time) is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    return True
+
+
 def _remove_stale_pid_files() -> None:
-    pid = _read_pid_file(PID_FILE)
-    if pid is None or not _is_process_alive(pid):
+    record = _read_pid_record()
+    if record is None or not _record_matches_process(record):
         try:
             os.unlink(PID_FILE)
         except FileNotFoundError:
@@ -416,7 +434,12 @@ def _start_daemon(host, port, log_level="info", no_browser=False):
 
     _wait_for_daemon_ready(proc, host, port, current_log)
 
-    _write_pid(proc.pid)
+    try:
+        _write_pid(proc.pid)
+    except RuntimeError as exc:
+        _terminate_child_process(proc)
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
 
     console.print(f"[green]Dashboard started on http://{host}:{port} (PID {proc.pid})[/green]")
     console.print(f"[dim]Log: {current_log}[/dim]")
@@ -457,6 +480,7 @@ def _build_daemon_command(host: str, port: int, log_level: str) -> list[str]:
             f"uvicorn.run('web.app:create_app', host='{host}', port={port}, "
             f"factory=True, workers=1, log_level='{log_level}')"
         ),
+        OPS_WEB_PROCESS_SENTINEL,
     ]
 
 
@@ -496,9 +520,21 @@ def _wait_for_daemon_ready(proc: subprocess.Popen, host: str, port: int, log_pat
             pass
         time.sleep(0.2)
 
-    _terminate_process(proc.pid)
+    _terminate_child_process(proc)
     console.print(f"[red]Server did not become ready at {health_url}. Check log: {log_path}[/red]")
     raise typer.Exit(1)
+
+
+def _terminate_child_process(proc: subprocess.Popen) -> None:
+    """Terminate a child handle created by this process without PID discovery."""
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 def _test_host(host: str) -> str:
@@ -550,7 +586,7 @@ def _is_nuitka_onefile_runtime(path: str) -> bool:
         return False
 
     try:
-        runtime_dir = os.path.realpath(os.path.join(os.path.expanduser("~"), ".bluearch", "bin"))
+        runtime_dir = os.path.realpath(os.path.join(os.path.expanduser("~"), ".bluearch-aws-ops", "bin"))
         executable_path = os.path.realpath(path)
     except OSError:
         return False
@@ -578,8 +614,9 @@ def _is_python_executable(path: str) -> bool:
 
 
 def _show_status():
-    pid = _read_pid()
-    running = bool(pid and _is_process_alive(pid))
+    record = _read_pid_record()
+    pid = record["pid"] if record else None
+    running = bool(record and _record_matches_process(record))
     if running:
         console.print(f"[green]Server is running (PID {pid})[/green]")
         try:
@@ -596,14 +633,13 @@ def _show_status():
         except Exception:
             pass
     else:
-        if pid:
-            _remove_pid()
+        _remove_pid()
         console.print("[dim]Server is not running[/dim]")
 
 
 def _is_server_running() -> bool:
-    pid = _read_pid()
-    return pid is not None and _is_process_alive(pid)
+    record = _read_pid_record()
+    return record is not None and _record_matches_process(record)
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -615,17 +651,49 @@ def _is_process_alive(pid: int) -> bool:
 
 
 def _write_pid(pid: int):
+    snapshot = _process_snapshot(pid)
+    if snapshot is None or not _snapshot_is_public_ops_web(snapshot):
+        raise RuntimeError("Refusing to record an unverified BlueArch AWS Ops web process")
     os.makedirs(PID_DIR, exist_ok=True)
     with open(PID_FILE, "w") as f:
-        f.write(str(pid))
+        json.dump(
+            {
+                "schema": PID_RECORD_SCHEMA,
+                "pid": pid,
+                "create_time": snapshot["create_time"],
+                "command": PUBLIC_OPS_EXECUTABLE,
+            },
+            f,
+            sort_keys=True,
+        )
+        f.write("\n")
+
+
+def _read_pid_record() -> Optional[dict]:
+    try:
+        with open(PID_FILE) as f:
+            record = json.load(f)
+        if (
+            record.get("schema") != PID_RECORD_SCHEMA
+            or record.get("command") != PUBLIC_OPS_EXECUTABLE
+            or not isinstance(record.get("pid"), int)
+            or record["pid"] <= 0
+            or not isinstance(record.get("create_time"), (int, float))
+        ):
+            return None
+        return record
+    except (FileNotFoundError, ValueError, TypeError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _record_matches_process(record: dict) -> bool:
+    return _same_process(record["pid"], float(record["create_time"])) is not None
 
 
 def _read_pid() -> Optional[int]:
-    try:
-        with open(PID_FILE) as f:
-            return int(f.read().strip())
-    except (FileNotFoundError, ValueError):
-        return None
+    """Compatibility helper returning only a verified Ops daemon PID."""
+    record = _read_pid_record()
+    return record["pid"] if record and _record_matches_process(record) else None
 
 
 def _remove_pid():

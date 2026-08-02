@@ -1,4 +1,37 @@
+import subprocess
+
 from typer import Option
+
+
+CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
+OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
+PUBLIC_FORMULAS = frozenset({CORE_FORMULA, OPS_FORMULA})
+
+
+def _trust_homebrew_formula(formula: str) -> bool:
+    """Trust one exact public formula before any Homebrew mutation."""
+    result = subprocess.run(
+        ["brew", "trust", "--formula", formula],
+        capture_output=False,
+        text=True,
+        timeout=60,
+    )
+    return result.returncode == 0
+
+
+def _run_trusted_homebrew_formula(operation: str, formula: str, *, timeout: int = 300) -> bool:
+    """Run one allowed install/upgrade only after its exact formula is trusted."""
+    if operation not in {"install", "upgrade"} or formula not in PUBLIC_FORMULAS:
+        raise ValueError("Unsupported Homebrew formula mutation")
+    if not _trust_homebrew_formula(formula):
+        return False
+    result = subprocess.run(
+        ["brew", operation, formula],
+        capture_output=False,
+        text=True,
+        timeout=timeout,
+    )
+    return result.returncode == 0
 
 def delete():
     """
@@ -111,7 +144,6 @@ def update(
       bluearch-aws-ops update --dev        # Development channel (curl only)
       bluearch-aws-ops update --yes        # Unattended (skip if already up to date)
     """
-    import subprocess
     from pathlib import Path
     from rich.console import Console
     from rich.prompt import Confirm
@@ -121,7 +153,7 @@ def update(
     from aws.misc.error_handlings import error_handler
 
     console = Console()
-    PROD_INSTALL_URL = "brew upgrade bluearchio/tap/bluearch-aws-ops"
+    PROD_INSTALL_URL = f"brew install {OPS_FORMULA}"
     DEV_INSTALL_URL = "pipx install -e ../bluearch-aws-ops --force"
     CORE_REQUIREMENT_KEYS = (
         "minimum_core_version",
@@ -178,11 +210,11 @@ def update(
             text=True,
             timeout=30,
         )
-        command = ["brew", "upgrade", "bluearchio/tap/bluearch-aws-core"] if installed.stdout.strip() else ["brew", "install", "bluearchio/tap/bluearch-aws-core"]
-        result = subprocess.run(command, capture_output=False, text=True, timeout=300)
-        if result.returncode != 0 and command[1] == "upgrade":
-            result = subprocess.run(["brew", "install", "bluearchio/tap/bluearch-aws-core"], capture_output=False, text=True, timeout=300)
-        return result.returncode == 0
+        operation = "upgrade" if installed.stdout.strip() else "install"
+        succeeded = _run_trusted_homebrew_formula(operation, CORE_FORMULA)
+        if not succeeded and operation == "upgrade":
+            succeeded = _run_trusted_homebrew_formula("install", CORE_FORMULA)
+        return succeeded
 
     def perform_homebrew_update(required_core_version: str) -> bool:
         console.print("\n[blue]Updating via Homebrew...[/blue]")
@@ -192,16 +224,15 @@ def update(
             console.print("[red]bluearch-aws-core update failed. BlueArch CLI update was not started.[/red]")
             return False
         console.print("[dim]Upgrading bluearch-aws-ops...[/dim]")
-        result = subprocess.run(
-            ["brew", "upgrade", "bluearchio/tap/bluearch-aws-ops"], capture_output=False, text=True, timeout=300
-        )
-        return result.returncode == 0
+        return _run_trusted_homebrew_formula("upgrade", OPS_FORMULA)
 
     def perform_core_install(required_core_version: str, development_channel: bool) -> bool:
         from utils.core_client import core_install_url
 
         install_url = core_install_url(development_channel)
         console.print(f"\n[blue]Ensuring bluearch-aws-core >= {required_core_version}...[/blue]")
+        if not development_channel:
+            return _run_trusted_homebrew_formula("install", CORE_FORMULA)
         cmd = install_url
         console.print(f"[dim]Executing: {cmd}[/dim]")
         result = subprocess.run(cmd.split(), capture_output=False, text=True)
@@ -304,7 +335,9 @@ def update(
                         )
                         if result.stdout.strip():
                             console.print("[yellow]Update available via Homebrew[/yellow]")
-                            console.print("\nTo update: [cyan]brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/cyan]")
+                            console.print(f"\n[cyan]brew trust --formula {CORE_FORMULA}[/cyan]")
+                            console.print(f"[cyan]brew trust --formula {OPS_FORMULA}[/cyan]")
+                            console.print(f"[cyan]brew upgrade {CORE_FORMULA} {OPS_FORMULA}[/cyan]")
                         else:
                             console.print("[green]Already on latest Homebrew version![/green]")
                     except Exception as e:
@@ -318,14 +351,16 @@ def update(
                         "(brew upgrade/install bluearch-aws-core, then brew upgrade bluearch-aws-ops)?"
                     )
                     if not Confirm.ask(prompt, default=True):
-                        console.print("\n[dim]Update cancelled. To update manually: brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/dim]")
+                        console.print(f"\n[dim]Update cancelled. First run: brew trust --formula {CORE_FORMULA}[/dim]")
+                        console.print(f"[dim]Then run: brew trust --formula {OPS_FORMULA}[/dim]")
+                        console.print(f"[dim]Then run: brew upgrade {CORE_FORMULA} {OPS_FORMULA}[/dim]")
                         return
 
                 if perform_homebrew_update(required_core_version):
                     console.print("\n[green]Update completed successfully![/green]")
                     console.print("\nRun [cyan]bluearch-aws-ops --version[/cyan] to verify the new version.")
                 else:
-                    console.print("[red]Homebrew update failed. Try manually: brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/red]")
+                    console.print(f"[red]Homebrew update failed. Trust {CORE_FORMULA} and {OPS_FORMULA} individually, then retry.[/red]")
                     raise typer.Exit(1)
                 return
 
@@ -381,9 +416,13 @@ def update(
             console.print(f"\n[blue]Downloading and installing latest {channel} version...[/blue]")
             cmd = install_url
             console.print(f"[dim]Executing: {cmd}[/dim]")
-            result = subprocess.run(cmd.split(), capture_output=False, text=True)
+            if development:
+                result = subprocess.run(cmd.split(), capture_output=False, text=True)
+                succeeded = result.returncode == 0
+            else:
+                succeeded = _run_trusted_homebrew_formula("install", OPS_FORMULA)
 
-            if result.returncode == 0:
+            if succeeded:
                 console.print("\n[green]Update completed successfully![/green]")
                 console.print("\n[dim]Database migrations are handled automatically during installation.[/dim]")
                 console.print(
