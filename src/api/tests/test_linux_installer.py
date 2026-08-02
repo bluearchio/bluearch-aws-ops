@@ -14,6 +14,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 ASSET_NAME = "bluearch-aws-ops-linux-x86_64.tar.gz"
 BINARY_NAME = "bluearch-aws-ops"
+CORE_ASSET_NAME = "bluearch-aws-core-linux-x86_64.tar.gz"
+CORE_BINARY_NAME = "bluearch-aws-core"
 REAL_SUBPROCESS_RUN = subprocess.run
 
 
@@ -22,10 +24,10 @@ def real_subprocess(mock_subprocess, monkeypatch):
     monkeypatch.setattr(subprocess, "run", REAL_SUBPROCESS_RUN)
 
 
-def _write_archive(path: Path, members: list[str]) -> None:
+def _write_archive(path: Path, members: list[str], version: str = "0.13.4") -> None:
     with tarfile.open(path, "w:gz") as archive:
         for name in members:
-            payload = b"#!/bin/sh\necho 0.13.4\n"
+            payload = f"#!/bin/sh\necho {version}\n".encode()
             info = tarfile.TarInfo(name)
             info.mode = 0o755
             info.size = len(payload)
@@ -53,7 +55,13 @@ def _write_fake_tools(bin_dir: Path) -> None:
         "    *) url=\"$1\"; shift ;;\n"
         "  esac\n"
         "done\n"
-        "source_file=\"$BLUEARCH_TEST_DIST_ROOT/${url##*/}\"\n"
+        "case \"$url\" in\n"
+        "  */bluearch-aws-core/*) product=core ;;\n"
+        "  */bluearch-aws-ops/*) product=ops ;;\n"
+        "  *) exit 22 ;;\n"
+        "esac\n"
+        "printf '%s\\n' \"$url\" >> \"$BLUEARCH_TEST_CURL_LOG\"\n"
+        "source_file=\"$BLUEARCH_TEST_DIST_ROOT/$product/${url##*/}\"\n"
         "[[ -f \"$source_file\" ]] || exit 22\n"
         "cp \"$source_file\" \"$output\"\n",
         encoding="utf-8",
@@ -75,24 +83,65 @@ def _write_fake_tools(bin_dir: Path) -> None:
         path.chmod(0o755)
 
 
-def _run_installer(tmp_path: Path, members: list[str], manifest: str | None) -> subprocess.CompletedProcess[str]:
-    dist = tmp_path / "dist"
-    dist.mkdir()
-    asset = dist / ASSET_NAME
-    _write_archive(asset, members)
+def _write_release(
+    directory: Path,
+    asset_name: str,
+    binary_name: str,
+    version: str,
+    *,
+    members: list[str] | None = None,
+    manifest: str | None = None,
+) -> None:
+    directory.mkdir(parents=True)
+    asset = directory / asset_name
+    _write_archive(asset, members or [binary_name], version)
     if manifest is None:
-        manifest = f"{hashlib.sha256(asset.read_bytes()).hexdigest()}  {ASSET_NAME}\n"
-    (dist / "SHA256SUMS").write_text(manifest, encoding="utf-8")
+        manifest = f"{hashlib.sha256(asset.read_bytes()).hexdigest()}  {asset_name}\n"
+    (directory / "SHA256SUMS").write_text(manifest, encoding="utf-8")
+
+
+def _run_installer(
+    tmp_path: Path,
+    members: list[str],
+    manifest: str | None,
+    *,
+    core_policy: str = "skip",
+    core_candidate: tuple[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    dist = tmp_path / "dist"
+    _write_release(
+        dist / "ops",
+        ASSET_NAME,
+        BINARY_NAME,
+        "0.13.4",
+        members=members,
+        manifest=manifest,
+    )
+    _write_release(
+        dist / "core",
+        CORE_ASSET_NAME,
+        CORE_BINARY_NAME,
+        "0.2.6",
+    )
     fake_bin = tmp_path / "fake-bin"
     _write_fake_tools(fake_bin)
+    if core_candidate is not None:
+        target_name, version = core_candidate
+        target = tmp_path / "existing-core" / target_name
+        target.parent.mkdir()
+        target.write_text(f"#!/bin/sh\necho {version}\n", encoding="utf-8")
+        target.chmod(0o755)
+        (fake_bin / CORE_BINARY_NAME).symlink_to(target)
     install_dir = tmp_path / "install"
+    curl_log = tmp_path / "curl.log"
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(tmp_path / "home"),
         "INSTALL_DIR": str(install_dir),
-        "BLUEARCH_INSTALL_CORE": "skip",
+        "BLUEARCH_INSTALL_CORE": core_policy,
         "BLUEARCH_TEST_DIST_ROOT": str(dist),
+        "BLUEARCH_TEST_CURL_LOG": str(curl_log),
         "BLUEARCH_DIST_BASE_URL": "https://example.invalid",
     }
     return subprocess.run(
@@ -129,3 +178,46 @@ def test_installer_rejects_extra_archive_members(tmp_path: Path, real_subprocess
 
     assert result.returncode != 0
     assert not (tmp_path / "install" / BINARY_NAME).exists()
+
+
+def test_installer_keeps_compatible_canonical_public_core(tmp_path: Path, real_subprocess) -> None:
+    result = _run_installer(
+        tmp_path,
+        [BINARY_NAME],
+        None,
+        core_policy="missing",
+        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.6"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "/bluearch-aws-core/" not in (tmp_path / "curl.log").read_text(encoding="utf-8")
+
+
+def test_installer_replaces_public_name_symlink_to_legacy_core(tmp_path: Path, real_subprocess) -> None:
+    result = _run_installer(
+        tmp_path,
+        [BINARY_NAME],
+        None,
+        core_policy="missing",
+        core_candidate=("bluearch-core", "bluearch-core 9.9.9"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "install" / CORE_BINARY_NAME).is_file()
+    assert "/bluearch-aws-core/" in (tmp_path / "curl.log").read_text(encoding="utf-8")
+
+
+def test_installer_replaces_outdated_public_core_target(tmp_path: Path, real_subprocess) -> None:
+    result = _run_installer(
+        tmp_path,
+        [BINARY_NAME],
+        None,
+        core_policy="missing",
+        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.5"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    installed_core = tmp_path / "install" / CORE_BINARY_NAME
+    assert installed_core.is_file()
+    assert "0.2.6" in installed_core.read_text(encoding="utf-8")
+    assert "/bluearch-aws-core/" in (tmp_path / "curl.log").read_text(encoding="utf-8")

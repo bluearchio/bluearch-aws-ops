@@ -13,6 +13,7 @@ CORE_REPO="bluearchio/bluearch-aws-core"
 CORE_BINARY_NAME="bluearch-aws-core"
 CORE_ASSET_NAME="bluearch-aws-core-linux-x86_64.tar.gz"
 CORE_VERSION="${BLUEARCH_CORE_VERSION:-latest}"
+MINIMUM_CORE_VERSION="0.2.6"
 CORE_INSTALL_POLICY="${BLUEARCH_INSTALL_CORE:-missing}"
 TEMP_DIRS=()
 
@@ -120,8 +121,53 @@ install_release() {
   log "Installed ${binary_name} to ${INSTALL_DIR}/${binary_name}"
 }
 
-binary_available() {
-  command -v "$1" >/dev/null 2>&1 || [[ -x "${INSTALL_DIR}/$1" ]]
+extract_semver() {
+  awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH); exit }'
+}
+
+version_at_least() {
+  local actual="$1"
+  local minimum="$2"
+  local actual_major actual_minor actual_patch
+  local minimum_major minimum_minor minimum_patch
+  IFS=. read -r actual_major actual_minor actual_patch <<< "$actual"
+  IFS=. read -r minimum_major minimum_minor minimum_patch <<< "$minimum"
+  actual_major=$((10#$actual_major))
+  actual_minor=$((10#$actual_minor))
+  actual_patch=$((10#$actual_patch))
+  minimum_major=$((10#$minimum_major))
+  minimum_minor=$((10#$minimum_minor))
+  minimum_patch=$((10#$minimum_patch))
+
+  (( actual_major > minimum_major )) || {
+    (( actual_major == minimum_major )) || return 1
+    (( actual_minor > minimum_minor )) || {
+      (( actual_minor == minimum_minor )) || return 1
+      (( actual_patch >= minimum_patch ))
+    }
+  }
+}
+
+compatible_core_available() {
+  local path
+  local resolved
+  local output
+  local version
+  local path_candidate=""
+
+  path_candidate="$(command -v "$CORE_BINARY_NAME" 2>/dev/null || true)"
+  for path in "$path_candidate" "${INSTALL_DIR}/${CORE_BINARY_NAME}"; do
+    [[ -n "$path" && -x "$path" ]] || continue
+    resolved="$(readlink -f -- "$path" 2>/dev/null || true)"
+    [[ -n "$resolved" && -f "$resolved" && -x "$resolved" ]] || continue
+    [[ "$(basename "$resolved")" == "$CORE_BINARY_NAME" ]] || continue
+    output="$("$resolved" --version 2>/dev/null)" || continue
+    version="$(printf '%s\n' "$output" | extract_semver)"
+    [[ -n "$version" ]] || continue
+    version_at_least "$version" "$MINIMUM_CORE_VERSION" || continue
+    return 0
+  done
+  return 1
 }
 
 case "$(uname -s)" in
@@ -138,14 +184,17 @@ require_command curl
 require_command tar
 require_command sha256sum
 require_command install
+require_command readlink
 
 case "$CORE_INSTALL_POLICY" in
   always)
     install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME"
+    compatible_core_available || fail "Installed ${CORE_BINARY_NAME} must be the canonical public binary at version >= ${MINIMUM_CORE_VERSION}"
     ;;
   missing)
-    if ! binary_available "$CORE_BINARY_NAME"; then
+    if ! compatible_core_available; then
       install_release "$CORE_APP_NAME" "$CORE_REPO" "$CORE_VERSION" "$CORE_ASSET_NAME" "$CORE_BINARY_NAME"
+      compatible_core_available || fail "Installed ${CORE_BINARY_NAME} must be the canonical public binary at version >= ${MINIMUM_CORE_VERSION}"
     fi
     ;;
   skip)

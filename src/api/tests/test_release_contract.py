@@ -65,6 +65,27 @@ def test_release_verifies_final_artifacts_without_inline_stamping_or_tap_mutatio
     assert "dist.bluearch.io" in _run_text(jobs["publish"])
 
 
+def test_publish_commands_are_explicitly_repository_scoped() -> None:
+    publish_commands = _run_text(_workflow()["jobs"]["publish"])
+
+    assert publish_commands.count('--repo "$GITHUB_REPOSITORY"') == 3
+    assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
+    assert 'gh release create "$RELEASE_TAG"' in publish_commands
+    assert 'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
+
+
+def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
+    requirements = (ROOT / "src" / "api" / "requirements.txt").read_text(encoding="utf-8")
+    linux_build = (ROOT / "scripts" / "build_nuitka_linux.sh").read_text(encoding="utf-8")
+    macos_build = (ROOT / "scripts" / "build_nuitka_macos.sh").read_text(encoding="utf-8")
+    entrypoint = (ROOT / "cli_entry.py").read_text(encoding="utf-8")
+
+    assert re.search(r"^psutil==\d+\.\d+\.\d+$", requirements, re.MULTILINE)
+    assert "--include-package=psutil" in linux_build
+    assert "--include-package=psutil" in macos_build
+    assert "import psutil" in entrypoint
+
+
 def test_committed_versions_are_bare_and_equal() -> None:
     project_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     version_text = (ROOT / "src" / "api" / "aws" / "misc" / "version_controller.py").read_text(encoding="utf-8")

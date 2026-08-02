@@ -43,6 +43,17 @@ def test_daemon_command_uses_cli_launcher_when_packaged(monkeypatch, tmp_path, p
     ]
 
 
+def test_process_snapshot_uses_real_declared_runtime_dependency():
+    """Exercise psutil itself so clean installs cannot pass on mocked snapshots."""
+    snapshot = web._process_snapshot(os.getpid())
+
+    assert snapshot is not None
+    assert snapshot["pid"] == os.getpid()
+    assert snapshot["create_time"] > 0
+    assert snapshot["cmdline"]
+    assert os.path.isabs(snapshot["executable"])
+
+
 def test_daemon_command_uses_cli_launcher_when_sys_executable_is_not_python(monkeypatch, tmp_path):
     launcher = tmp_path / "bluearch-aws-ops"
     launcher.write_text("#!/bin/sh\n")

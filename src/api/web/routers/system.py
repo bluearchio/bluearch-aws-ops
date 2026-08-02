@@ -21,6 +21,7 @@ async def _health_payload():
         core_health = request_core("GET", "/api/v1/core/health", service_token=False, timeout=1.0)
     except Exception as exc:
         return {
+            "service": "bluearch-aws-ops",
             "status": "unhealthy",
             "version": CURRENT_VERSION,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -28,6 +29,7 @@ async def _health_payload():
             "aws": {"connected": False, "status": "not_checked"},
         }
     return {
+        "service": "bluearch-aws-ops",
         "status": "healthy" if core_health.get("status") == "ok" and core_health.get("db_ready") else "degraded",
         "version": CURRENT_VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat(),

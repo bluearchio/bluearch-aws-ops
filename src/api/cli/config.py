@@ -1,4 +1,6 @@
+import os
 import subprocess
+from pathlib import Path
 
 from typer import Option
 
@@ -6,6 +8,7 @@ from typer import Option
 CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
 OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
 PUBLIC_FORMULAS = frozenset({CORE_FORMULA, OPS_FORMULA})
+PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
 
 
 def _trust_homebrew_formula(formula: str) -> bool:
@@ -32,6 +35,83 @@ def _run_trusted_homebrew_formula(operation: str, formula: str, *, timeout: int 
         timeout=timeout,
     )
     return result.returncode == 0
+
+
+def _run_trusted_homebrew_outdated(formula: str = OPS_FORMULA):
+    """Query one exact formula only after formula-scoped trust succeeds."""
+    if formula != OPS_FORMULA:
+        raise ValueError("Unsupported Homebrew formula query")
+    if not _trust_homebrew_formula(formula):
+        raise RuntimeError(f"Could not trust required formula {formula}")
+    result = subprocess.run(
+        ["brew", "outdated", formula],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Homebrew outdated check failed for {formula}{suffix}")
+    return result
+
+
+def _resolve_public_homebrew_binary(path: Path) -> Path | None:
+    """Resolve a Homebrew link without executing legacy or renamed targets."""
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    try:
+        cellar_index = resolved.parts.index("Cellar")
+        formula_name = resolved.parts[cellar_index + 1]
+    except (ValueError, IndexError):
+        return None
+    if (
+        resolved.name != PUBLIC_OPS_EXECUTABLE
+        or formula_name != PUBLIC_OPS_EXECUTABLE
+        or not resolved.is_file()
+        or not os.access(resolved, os.X_OK)
+    ):
+        return None
+    return resolved
+
+
+def detect_homebrew_installation(locations: dict[str, Path] | None = None) -> dict:
+    """Return info only for an exact, executable public Ops Homebrew target."""
+    locations = locations or {
+        "homebrew_arm": Path("/opt/homebrew/bin/bluearch-aws-ops"),
+        "homebrew_intel": Path("/usr/local/bin/bluearch-aws-ops"),
+    }
+    for install_type, path in locations.items():
+        resolved = _resolve_public_homebrew_binary(path)
+        if resolved is None:
+            continue
+
+        version = "unknown"
+        try:
+            result = subprocess.run(
+                [str(resolved), "--version"], capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "BlueArch" in line:
+                        version = line.strip()
+                        break
+        except Exception:
+            pass
+
+        legacy_binary = Path.home() / ".local" / "bin" / "bluearch"
+        return {
+            "installed": True,
+            "binary_path": str(path),
+            "resolved_binary_path": str(resolved),
+            "version": version,
+            "install_type": install_type,
+            "conflict": legacy_binary.exists(),
+            "curl_binary_path": str(legacy_binary) if legacy_binary.exists() else None,
+        }
+    return {"installed": False}
 
 def delete():
     """
@@ -144,7 +224,6 @@ def update(
       bluearch-aws-ops update --dev        # Development channel (curl only)
       bluearch-aws-ops update --yes        # Unattended (skip if already up to date)
     """
-    from pathlib import Path
     from rich.console import Console
     from rich.prompt import Confirm
     from rich.markup import escape
@@ -161,46 +240,6 @@ def update(
         "bluearch_core_min_version",
         "required_core_version",
     )
-
-    def detect_homebrew_installation() -> dict:
-        """Return info about a Homebrew-installed public Ops binary, if any."""
-        locations = {
-            "homebrew_arm": Path("/opt/homebrew/bin/bluearch-aws-ops"),
-            "homebrew_intel": Path("/usr/local/bin/bluearch-aws-ops"),
-        }
-        for install_type, path in locations.items():
-            if not path.exists():
-                continue
-            if install_type == "homebrew_intel":
-                try:
-                    if "Cellar" not in str(path.resolve()):
-                        continue
-                except Exception:
-                    continue
-
-            version = "unknown"
-            try:
-                result = subprocess.run(
-                    [str(path), "--version"], capture_output=True, text=True, timeout=10
-                )
-                if result.returncode == 0:
-                    for line in result.stdout.split("\n"):
-                        if "BlueArch" in line:
-                            version = line.strip()
-                            break
-            except Exception:
-                pass
-
-            curl_binary = Path.home() / ".local" / "bin" / "bluearch"
-            return {
-                "installed": True,
-                "binary_path": str(path),
-                "version": version,
-                "install_type": install_type,
-                "conflict": curl_binary.exists(),
-                "curl_binary_path": str(curl_binary) if curl_binary.exists() else None,
-            }
-        return {"installed": False}
 
     def perform_homebrew_core_update(required_core_version: str) -> bool:
         console.print(f"[dim]Ensuring bluearch-aws-core >= {required_core_version}...[/dim]")
@@ -329,10 +368,7 @@ def update(
                 if check:
                     console.print("\n[blue]Checking for Homebrew updates...[/blue]")
                     try:
-                        result = subprocess.run(
-                            ["brew", "outdated", "bluearch-aws-ops"],
-                            capture_output=True, text=True, timeout=30,
-                        )
+                        result = _run_trusted_homebrew_outdated()
                         if result.stdout.strip():
                             console.print("[yellow]Update available via Homebrew[/yellow]")
                             console.print(f"\n[cyan]brew trust --formula {CORE_FORMULA}[/cyan]")
@@ -341,7 +377,8 @@ def update(
                         else:
                             console.print("[green]Already on latest Homebrew version![/green]")
                     except Exception as e:
-                        console.print(f"[dim]Could not check: {escape(str(e))}[/dim]")
+                        console.print(f"[red]Could not check Homebrew updates: {escape(str(e))}[/red]")
+                        raise typer.Exit(1)
                     return
 
                 console.print("\n[blue]Homebrew is the recommended update method for your installation.[/blue]")
