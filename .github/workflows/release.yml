@@ -41,11 +41,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "${GITHUB_REF_TYPE:-}" = "tag" || {
+            echo "::error::Releases must run from a tag ref, not a branch"
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Release tag must match vX.Y.Z exactly"
+            exit 1
+          }
           git fetch --no-tags origin main:refs/remotes/origin/main
-          tag_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+          tag_sha="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
           main_sha="$(git rev-parse origin/main)"
-          test "$tag_sha" = "$main_sha" || {
-            echo "::error::Release tag must point at origin/main"
+          test "$tag_sha" = "$head_sha" || {
+            echo "::error::Checked-out HEAD must be the release tag commit"
+            exit 1
+          }
+          test "$head_sha" = "$main_sha" || {
+            echo "::error::Release tag commit must be exactly origin/main"
             exit 1
           }
           python3 - <<'PY'

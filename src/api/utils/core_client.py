@@ -22,6 +22,9 @@ MINIMUM_CORE_VERSION = os.environ.get("BLUEARCH_MINIMUM_CORE_VERSION", DEFAULT_M
 PROD_CORE_INSTALL_URL = "brew install bluearchio/tap/bluearch-aws-core"
 DEV_CORE_INSTALL_URL = "pipx install -e ../bluearch-aws-core"
 PUBLIC_CORE_EXECUTABLE = "bluearch-aws-core"
+PUBLIC_CORE_VERSION_RE = re.compile(
+    rf"{re.escape(PUBLIC_CORE_EXECUTABLE)} ([0-9]+\.[0-9]+\.[0-9]+)"
+)
 
 
 class CoreRuntimeError(RuntimeError):
@@ -151,8 +154,9 @@ def get_installed_core_version() -> str | None:
         )
     except Exception:
         return None
-    output = f"{result.stdout}\n{result.stderr}"
-    return _extract_version(output)
+    if result.returncode != 0:
+        return None
+    return _extract_public_core_version(result.stdout)
 
 
 def core_version_satisfies(version: str | None, minimum_version: str | None = None) -> bool:
@@ -167,12 +171,13 @@ def core_install_url(development: bool = False) -> str:
     return DEV_CORE_INSTALL_URL if development else PROD_CORE_INSTALL_URL
 
 
-def _extract_version(text: str) -> str | None:
-    match = re.search(r"v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9_.-]+)?", text or "")
-    if match:
-        return match.group(0).lstrip("v")
-    sha_match = re.search(r"\b[0-9a-f]{7,40}\b", text or "", re.IGNORECASE)
-    return sha_match.group(0) if sha_match else None
+def _extract_public_core_version(text: str) -> str | None:
+    """Parse only the canonical public Core identity on the first output line."""
+    lines = (text or "").splitlines()
+    if not lines:
+        return None
+    match = PUBLIC_CORE_VERSION_RE.fullmatch(lines[0])
+    return match.group(1) if match else None
 
 
 def _format_core_update_message(app_name: str, status: dict[str, Any], minimum_version: str) -> str:

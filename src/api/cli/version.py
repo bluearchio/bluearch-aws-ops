@@ -7,6 +7,7 @@ from aws.misc.version_controller import CURRENT_VERSION
 
 
 PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
+CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
 OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
 
 
@@ -15,12 +16,10 @@ def version_callback(value: bool):
         console = Console()
         console.print(f"{PUBLIC_OPS_EXECUTABLE} [blue]{CURRENT_VERSION}[/blue]")
         if not _is_development_version(CURRENT_VERSION):
-            console.print(
-                "Check for updates with [cyan]"
-                f"brew trust --formula {OPS_FORMULA} && "
-                f"brew update && brew outdated {OPS_FORMULA}"
-                "[/cyan]."
-            )
+            console.print("Check for updates with:")
+            console.print(f"  [cyan]brew trust --formula {CORE_FORMULA}[/cyan]")
+            console.print(f"  [cyan]brew trust --formula {OPS_FORMULA}[/cyan]")
+            console.print(f"  [cyan]brew update && brew outdated {OPS_FORMULA}[/cyan]")
         raise Exit()
 
 

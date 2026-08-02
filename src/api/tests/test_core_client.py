@@ -38,7 +38,8 @@ def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch,
     )
 
     class Result:
-        stdout = "BlueArch Core v0.2.6"
+        returncode = 0
+        stdout = "bluearch-aws-core 0.2.6\n"
         stderr = ""
 
     monkeypatch.setattr(
@@ -49,6 +50,38 @@ def test_core_version_lookup_spawns_only_the_public_core_executable(monkeypatch,
 
     assert core_client.get_installed_core_version() == "0.2.6"
     assert commands == [[str(public_core), "--version"]]
+
+
+@pytest.mark.parametrize(
+    "returncode,stdout,stderr",
+    [
+        (1, "bluearch-aws-core 0.2.6\n", "failed"),
+        (0, "bluearch-core 9.9.9\n", ""),
+        (0, "wrapper bluearch-aws-core 9.9.9\n", ""),
+        (0, "garbage 9.9.9\n", ""),
+        (0, "bluearch-aws-core v0.2.6\n", ""),
+        (0, "garbage\nbluearch-aws-core 0.2.6\n", ""),
+        (0, "", "bluearch-aws-core 0.2.6\n"),
+    ],
+)
+def test_core_version_lookup_rejects_failed_or_non_public_identity(
+    monkeypatch, tmp_path, returncode, stdout, stderr
+):
+    public_core = tmp_path / "bluearch-aws-core"
+    public_core.write_text("#!/bin/sh\n")
+    public_core.chmod(0o755)
+    monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(public_core))
+
+    class Result:
+        pass
+
+    result = Result()
+    result.returncode = returncode
+    result.stdout = stdout
+    result.stderr = stderr
+    monkeypatch.setattr(core_client.subprocess, "run", lambda *args, **kwargs: result)
+
+    assert core_client.get_installed_core_version() is None
 
 
 @pytest.mark.parametrize("unsafe_override", ["bluearch", "bluearch-core", "company-core-launcher"])

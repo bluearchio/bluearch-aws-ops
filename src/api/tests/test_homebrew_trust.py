@@ -36,6 +36,22 @@ def test_active_homebrew_mutation_trusts_before_install(monkeypatch):
     ]
 
 
+def test_ops_homebrew_mutation_trusts_core_then_ops(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        config.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append(command) or SimpleNamespace(returncode=0),
+    )
+
+    assert config._run_trusted_homebrew_formula("upgrade", config.OPS_FORMULA)
+    assert commands == [
+        ["brew", "trust", "--formula", config.CORE_FORMULA],
+        ["brew", "trust", "--formula", config.OPS_FORMULA],
+        ["brew", "upgrade", config.OPS_FORMULA],
+    ]
+
+
 def test_active_homebrew_mutation_rejects_unapproved_formula(monkeypatch):
     commands = []
     monkeypatch.setattr(config.subprocess, "run", lambda command, **kwargs: commands.append(command))
@@ -63,6 +79,7 @@ def test_outdated_check_trusts_and_queries_only_the_exact_ops_formula(monkeypatc
 
     assert result.returncode == 0
     assert commands == [
+        ["brew", "trust", "--formula", "bluearchio/tap/bluearch-aws-core"],
         ["brew", "trust", "--formula", "bluearchio/tap/bluearch-aws-ops"],
         ["brew", "outdated", "bluearchio/tap/bluearch-aws-ops"],
     ]
@@ -72,6 +89,7 @@ def test_outdated_check_treats_nonzero_as_failure(monkeypatch):
     responses = iter(
         [
             SimpleNamespace(returncode=0, stdout="", stderr=""),
+            SimpleNamespace(returncode=0, stdout="", stderr=""),
             SimpleNamespace(returncode=2, stdout="", stderr="tap unavailable"),
         ]
     )
@@ -79,6 +97,88 @@ def test_outdated_check_treats_nonzero_as_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="tap unavailable"):
         config._run_trusted_homebrew_outdated()
+
+
+def test_homebrew_update_trusts_both_formulas_and_verifies_core_before_ops(monkeypatch):
+    from utils import core_client
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command == ["/tmp/bluearch-aws-core", "--version"]:
+            return SimpleNamespace(returncode=0, stdout="bluearch-aws-core 0.2.6\n", stderr="")
+        is_core_list = command[:4] == ["brew", "list", "--versions", "bluearch-aws-core"]
+        stdout = "bluearch-aws-core 0.2.6\n" if is_core_list else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(config.subprocess, "run", run)
+    monkeypatch.setattr(core_client, "_find_core_executable", lambda: "/tmp/bluearch-aws-core")
+
+    assert config._perform_homebrew_update("0.2.6") is True
+    assert commands == [
+        ["brew", "trust", "--formula", config.CORE_FORMULA],
+        ["brew", "trust", "--formula", config.OPS_FORMULA],
+        ["brew", "update"],
+        ["brew", "list", "--versions", "bluearch-aws-core"],
+        ["brew", "trust", "--formula", config.CORE_FORMULA],
+        ["brew", "upgrade", config.CORE_FORMULA],
+        ["/tmp/bluearch-aws-core", "--version"],
+        ["brew", "trust", "--formula", config.CORE_FORMULA],
+        ["brew", "trust", "--formula", config.OPS_FORMULA],
+        ["brew", "upgrade", config.OPS_FORMULA],
+    ]
+
+
+def test_homebrew_update_stops_when_brew_update_fails(monkeypatch):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=2 if command == ["brew", "update"] else 0,
+            stdout="",
+            stderr="network unavailable",
+        )
+
+    monkeypatch.setattr(config.subprocess, "run", run)
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    assert commands == [
+        ["brew", "trust", "--formula", config.CORE_FORMULA],
+        ["brew", "trust", "--formula", config.OPS_FORMULA],
+        ["brew", "update"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "core_output",
+    [
+        "bluearch-core 9.9.9\n",
+        "bluearch-aws-core 0.2.5\n",
+    ],
+)
+def test_homebrew_update_blocks_ops_upgrade_for_invalid_or_old_core(
+    monkeypatch, core_output
+):
+    from utils import core_client
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command == ["/tmp/bluearch-aws-core", "--version"]:
+            return SimpleNamespace(returncode=0, stdout=core_output, stderr="")
+        is_core_list = command[:4] == ["brew", "list", "--versions", "bluearch-aws-core"]
+        stdout = "bluearch-aws-core 0.2.6\n" if is_core_list else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(config.subprocess, "run", run)
+    monkeypatch.setattr(core_client, "_find_core_executable", lambda: "/tmp/bluearch-aws-core")
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    assert ["/tmp/bluearch-aws-core", "--version"] in commands
+    assert ["brew", "upgrade", config.OPS_FORMULA] not in commands
 
 
 def test_homebrew_detection_executes_resolved_exact_public_target(monkeypatch, tmp_path):
@@ -93,7 +193,7 @@ def test_homebrew_detection_executes_resolved_exact_public_target(monkeypatch, t
 
     def run(command, **kwargs):
         commands.append(command)
-        return SimpleNamespace(returncode=0, stdout="BlueArch CLI version: 0.13.4\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="bluearch-aws-ops 0.13.4\n", stderr="")
 
     monkeypatch.setattr(config.subprocess, "run", run)
 
@@ -102,6 +202,7 @@ def test_homebrew_detection_executes_resolved_exact_public_target(monkeypatch, t
     assert installation["installed"] is True
     assert installation["binary_path"] == str(public_link)
     assert installation["resolved_binary_path"] == str(resolved)
+    assert installation["version"] == "bluearch-aws-ops 0.13.4"
     assert commands == [[str(resolved), "--version"]]
 
 

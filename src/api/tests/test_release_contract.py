@@ -44,6 +44,18 @@ def test_release_graph_verifies_tag_and_main_before_builds() -> None:
     assert "npm --prefix frontend run build" in verify_commands
 
 
+def test_release_source_gate_rejects_v_named_branches_and_ambiguous_refs() -> None:
+    verify_commands = _run_text(_workflow()["jobs"]["verify"])
+
+    assert 'test "${GITHUB_REF_TYPE:-}" = "tag"' in verify_commands
+    assert '[[ "$RELEASE_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in verify_commands
+    assert 'git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"' in verify_commands
+    assert 'head_sha="$(git rev-parse HEAD)"' in verify_commands
+    assert 'test "$tag_sha" = "$head_sha"' in verify_commands
+    assert 'test "$head_sha" = "$main_sha"' in verify_commands
+    assert 'git rev-list -n 1 "$RELEASE_TAG"' not in verify_commands
+
+
 def test_normal_ci_runs_on_dev_and_main() -> None:
     workflow = yaml.load(CI_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
@@ -92,6 +104,17 @@ def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
     assert "--include-package=psutil" in linux_build
     assert "--include-package=psutil" in macos_build
     assert "import psutil" in entrypoint
+
+
+def test_legacy_binary_overwrite_updater_is_not_shipped() -> None:
+    execution_source = (ROOT / "src" / "api" / "commons" / "execution.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "def update_cli(" not in execution_source
+    assert 'installed_binary = os.path.join(install_dir, "bluearch")' not in execution_source
+    assert "requests.get(binary_url" not in execution_source
+    assert "bluearch_{plat}_{arch}" not in execution_source
 
 
 def test_committed_versions_are_bare_and_equal() -> None:

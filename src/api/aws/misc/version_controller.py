@@ -14,8 +14,9 @@ def get_updates() -> list[dict]:
     """Return public release metadata.
 
     Public builds do not call BlueArch-hosted release APIs. Homebrew users can
-    trust the exact Ops formula with
-    `brew trust --formula bluearchio/tap/bluearch-aws-ops`, then check with
+    trust the exact Core formula and then the exact Ops formula before checking:
+    `brew trust --formula bluearchio/tap/bluearch-aws-core`,
+    `brew trust --formula bluearchio/tap/bluearch-aws-ops`, then
     `brew outdated bluearchio/tap/bluearch-aws-ops`.
     """
     return []
