@@ -172,7 +172,7 @@ compatible_core_available() {
 
 case "$(uname -s)" in
   Linux) ;;
-  *) fail "This installer supports Linux only. On macOS, run 'brew trust --formula bluearchio/tap/bluearch-aws-core' and 'brew trust --formula bluearchio/tap/bluearch-aws-ops', then install bluearchio/tap/bluearch-aws-ops." ;;
+  *) fail "This installer supports Linux only. On macOS, run 'brew trust --formula bluearchio/tap/bluearch-aws-core' and 'brew trust --formula bluearchio/tap/bluearch-aws-ops', then run 'brew install bluearchio/tap/bluearch-aws-ops'." ;;
 esac
 
 case "$(uname -m)" in

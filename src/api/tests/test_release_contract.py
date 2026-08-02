@@ -63,6 +63,10 @@ def test_release_verifies_final_artifacts_without_inline_stamping_or_tap_mutatio
     assert "homebrew-tap" not in workflow_text
     assert "update_formula.py" not in workflow_text
     assert "dist.bluearch.io" in _run_text(jobs["publish"])
+    macos_commands = _run_text(jobs["macos"])
+    assert "--keepParent" not in macos_commands
+    assert "--norsrc --noextattr --noqtn --noacl" in macos_commands
+    assert "cd dist" in macos_commands
 
 
 def test_publish_commands_are_explicitly_repository_scoped() -> None:
