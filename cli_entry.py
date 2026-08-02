@@ -26,6 +26,7 @@ try:
     import boto3
     import pynamodb  # Keep during DynamoDB transition
     import fastapi
+    import psutil
     # Belt-and-suspenders: ensure PyInstaller's static analysis sees these
     # even if their import sites are conditional/lazy.
     import fernet

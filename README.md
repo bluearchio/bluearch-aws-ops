@@ -15,8 +15,13 @@ This repo is not the shared runtime. It does not own account context, shared per
 
 ## Install
 
+Installing a fully qualified formula automatically adds the tap and trusts only
+that formula. Install Core explicitly first so Homebrew records trust for the
+separate dependency before resolving Ops. A separate `brew tap` or `brew trust`
+command is not needed for a first-time install. See
+[Homebrew's tap-trust documentation](https://docs.brew.sh/Tap-Trust).
+
 ```bash
-brew tap bluearchio/tap
 brew install bluearchio/tap/bluearch-aws-core
 brew install bluearchio/tap/bluearch-aws-ops
 bluearch-aws-core start --daemon
@@ -24,10 +29,24 @@ bluearch-aws-ops scan
 bluearch-aws-ops recommendations
 ```
 
+`brew tap bluearchio/tap` only downloads and registers the repository; it does
+not grant trust. Whole-tap trust is unnecessary.
+
+### Recovery for an existing tap
+
+If an existing or partially completed installation refuses to load either
+formula, trust only Core and Ops, then retry the product installation:
+
+```bash
+brew trust --formula bluearchio/tap/bluearch-aws-core
+brew trust --formula bluearchio/tap/bluearch-aws-ops
+brew install bluearchio/tap/bluearch-aws-ops
+```
+
 Linux:
 
 ```bash
-curl -fsSL https://dist.bluearch.io/install/bluearch-aws-ops.sh | bash
+curl -fsSL https://github.com/bluearchio/bluearch-aws-ops/releases/latest/download/install-linux.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 bluearch-aws-core start --daemon
 bluearch-aws-ops scan
@@ -35,7 +54,11 @@ bluearch-aws-ops recommendations
 ```
 
 The Linux installer installs `bluearch-aws-core` automatically if it is missing.
-`bluearch` is also installed as a shorter compatibility command.
+It downloads both verified archives and their `SHA256SUMS` directly from GitHub
+Releases by default. Set `BLUEARCH_VERSION=vX.Y.Z` and
+`BLUEARCH_CORE_VERSION=vX.Y.Z` for immutable releases.
+`BLUEARCH_DIST_BASE_URL` is supported only when explicitly set to an approved
+mirror base URL.
 
 From source:
 
@@ -45,7 +68,7 @@ python -m venv .venv
 pip install -e .
 bluearch-aws-core start --daemon
 bluearch-aws-ops scan
-bluearch-aws-ops web start
+bluearch-aws-ops recommendations
 ```
 
 ## Local Development
@@ -99,7 +122,26 @@ gh attestation verify bluearch-aws-ops-linux-x86_64.tar.gz --repo bluearchio/blu
 
 For macOS, verify `bluearch-aws-ops-macos-arm64.zip` with `gh attestation verify`.
 
-Release workflows also open a pull request against `bluearchio/homebrew-tap` to update `bluearch-aws-ops`. Configure `HOMEBREW_TAP_TOKEN_2` before cutting a public tag.
+The publish job can safely resume an existing draft. If a runner stops after
+making the release public but before the job completes, an existing public
+release is accepted only when its tag target and every remote asset name and
+GitHub-provided SHA-256 digest exactly match the rebuilt local set. The workflow
+then continues without mutating it; any mismatch fails closed.
+
+After publication, a separate Homebrew job checks out
+`bluearchio/homebrew-tap` at `main`, uses its `scripts/update_formula.py` to
+generate the immutable GitHub Release URL and exact macOS archive SHA-256, and
+opens or updates `release/bluearch-aws-ops-vX.Y.Z`. It requests an automatic
+squash merge and waits up to two hours for the pull request to report `MERGED`;
+the product release workflow does not succeed merely because auto-merge was
+requested. A failed Homebrew job can be rerun without republishing the immutable
+release: use GitHub Actions' **Re-run failed jobs** action. **Re-run all jobs**
+is reserved for exact crash recovery and succeeds after publication only under
+the tag-target and asset/digest equality checks above. Before creating a release
+tag, the tap must have auto-merge enabled and
+`main` protected by its required CI checks. Configure `HOMEBREW_TAP_TOKEN_2` as
+a fine-grained token for that tap with Contents and Pull requests read/write
+access.
 
 ## Security And Privacy Defaults
 

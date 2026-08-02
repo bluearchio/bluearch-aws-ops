@@ -20,41 +20,109 @@ env:
   RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
-  linux:
-    name: Linux release binary
-    runs-on: ubuntu-22.04
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref_name, 'v')
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Stamp release version
-        shell: python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify tag, committed version, and main SHA
+        shell: bash
         run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE:-}" = "tag" || {
+            echo "::error::Releases must run from a tag ref, not a branch"
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Release tag must match vX.Y.Z exactly"
+            exit 1
+          }
+          git fetch --no-tags origin \
+            dev:refs/remotes/origin/dev \
+            main:refs/remotes/origin/main
+          tag_sha="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          dev_sha="$(git rev-parse origin/dev)"
+          main_sha="$(git rev-parse origin/main)"
+          test "$tag_sha" = "$head_sha" || {
+            echo "::error::Checked-out HEAD must be the release tag commit"
+            exit 1
+          }
+          test "$head_sha" = "$main_sha" || {
+            echo "::error::Release tag commit must be exactly origin/main"
+            exit 1
+          }
+          git merge-base --is-ancestor "$dev_sha" "$tag_sha" || {
+            echo "::error::origin/dev must be merged into the exact release commit (tag/HEAD/origin/main)"
+            exit 1
+          }
+          python3 - <<'PY'
           import os
-          from datetime import datetime, timezone
+          import re
+          import tomllib
           from pathlib import Path
 
-          release_tag = os.environ["RELEASE_TAG"]
-          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"invalid release tag: {tag}")
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
+          version_text = Path("src/api/aws/misc/version_controller.py").read_text(encoding="utf-8")
+          runtime_version = re.search(
+              r'^CURRENT_VERSION = os\.environ\.get\("BLUEARCH_AWS_OPS_VERSION", "([^"]+)"\)$',
+              version_text,
+              re.M,
+          ).group(1)
+          if project_version != runtime_version or tag != f"v{project_version}":
+              raise SystemExit(
+                  f"tag/version mismatch: tag={tag} project={project_version} runtime={runtime_version}"
+              )
+          PY
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r src/api/requirements.txt -e . pytest pytest-mock httpx2 PyYAML
+          npm --prefix frontend ci
+      - name: Run repository and release-contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src/api python -m pytest src/api/tests -q
+          PYTHONPATH=src/api python -m compileall -q src/api
+          npm --prefix frontend run build
+          bash -n \
+            scripts/build_nuitka_linux.sh \
+            scripts/build_nuitka_macos.sh \
+            scripts/install-linux.sh \
+            scripts/verify_linux_artifact.sh \
+            scripts/verify_macos_artifact.sh
 
-          version_file = Path("src/api/aws/misc/version_controller.py")
-          version_text = version_file.read_text()
-          version_text = version_text.replace(
-              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
-              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
-          )
-          version_file.write_text(version_text)
-
-          for template in Path("src/api/templates").glob("*.yaml"):
-              text = template.read_text()
-              text = text.replace("__TEMPLATE_VERSION__", release_tag)
-              text = text.replace("__CLI_VERSION__", release_tag)
-              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
-              template.write_text(text)
+  linux:
+    name: Verified Linux release binary
+    needs: verify
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref_name, 'v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -70,18 +138,29 @@ jobs:
           python -m pip install -U pip
           python -m pip install -r src/api/requirements.txt -e .
           python -m pip install -r build-requirements.txt
-      - name: Build Linux binary
-        run: bash scripts/build_nuitka_linux.sh
-      - name: Package Linux asset
+      - name: Prepare deterministic bundled templates
         shell: bash
         run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          python scripts/prepare_release_templates.py
+      - name: Build Linux binary
+        run: bash scripts/build_nuitka_linux.sh
+      - name: Package and verify final Linux archive
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p artifacts
           tar -C dist -czf "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" "$BINARY_NAME"
           install -m 0755 scripts/install-linux.sh artifacts/install-linux.sh
-      - name: Generate Linux SBOM
+          bash scripts/verify_linux_artifact.sh \
+            "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" \
+            "$BINARY_NAME" \
+            "${RELEASE_TAG#v}"
+      - name: Generate final Linux artifact SBOM
         uses: anchore/sbom-action@v0.24.0
         with:
-          path: .
+          path: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.tar.gz
           format: cyclonedx-json
           output-file: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.cyclonedx.json
           upload-artifact: false
@@ -93,40 +172,16 @@ jobs:
           if-no-files-found: error
 
   macos:
-    name: Signed macOS release binary
+    name: Verified signed macOS release binary
+    needs: verify
     runs-on: macos-14
     if: startsWith(github.ref_name, 'v')
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Stamp release version
-        shell: python
-        run: |
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          release_tag = os.environ["RELEASE_TAG"]
-          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-          version_file = Path("src/api/aws/misc/version_controller.py")
-          version_text = version_file.read_text()
-          version_text = version_text.replace(
-              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
-              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
-          )
-          version_file.write_text(version_text)
-
-          for template in Path("src/api/templates").glob("*.yaml"):
-              text = template.read_text()
-              text = text.replace("__TEMPLATE_VERSION__", release_tag)
-              text = text.replace("__CLI_VERSION__", release_tag)
-              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
-              template.write_text(text)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -140,20 +195,18 @@ jobs:
         shell: bash
         run: |
           python -m pip install -U pip
-          python -m pip install -r src/api/requirements.txt -e .
+          python -m pip install -r src/api/requirements.txt -e . pytest PyYAML
           python -m pip install -r build-requirements-macos.txt
+      - name: Verify unsigned-artifact rejection contract
+        run: PYTHONPATH=src/api python -m pytest src/api/tests/test_release_contract.py -k unsigned -q
+      - name: Prepare deterministic bundled templates
+        shell: bash
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          python scripts/prepare_release_templates.py
       - name: Build unsigned macOS binary
         run: bash scripts/build_nuitka_macos.sh
-      - name: Prepare macOS artifacts directory
-        run: mkdir -p artifacts
-      - name: Generate macOS SBOM
-        uses: anchore/sbom-action@v0.24.0
-        with:
-          path: .
-          format: cyclonedx-json
-          output-file: artifacts/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
-          upload-artifact: false
-          upload-release-assets: false
       - name: Import Apple signing assets
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || secrets.MACOS_CERTIFICATE }}
@@ -165,6 +218,7 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         shell: bash
         run: |
+          set -euo pipefail
           for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing required signing secret: $name"
@@ -181,10 +235,10 @@ jobs:
 
           temp = Path(os.environ["RUNNER_TEMP"])
           (temp / "developer_id.p12").write_bytes(base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"]))
-          api_key_id = os.environ.get("APPLE_API_KEY_ID")
-          api_key = os.environ.get("APPLE_API_KEY_P8_BASE64")
-          if api_key_id and api_key:
-              (temp / f"AuthKey_{api_key_id}.p8").write_bytes(base64.b64decode(api_key))
+          key_id = os.environ.get("APPLE_API_KEY_ID")
+          key = os.environ.get("APPLE_API_KEY_P8_BASE64")
+          if key_id and key:
+              (temp / f"AuthKey_{key_id}.p8").write_bytes(base64.b64decode(key))
           PY
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
@@ -196,16 +250,12 @@ jobs:
           if [[ -z "$identity" ]]; then
             identity="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
           fi
-          if [[ -z "$identity" ]]; then
-            echo "::error::Developer ID Application certificate not found in imported keychain."
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-            exit 1
-          fi
+          [[ -n "$identity" ]] || { echo "::error::Developer ID Application identity not found"; exit 1; }
           {
             echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
             echo "MACOS_CODESIGN_IDENTITY=$identity"
           } >> "$GITHUB_ENV"
-      - name: Codesign and notarize macOS asset
+      - name: Sign, notarize, and verify final macOS archive
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -214,33 +264,37 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
+          set -euo pipefail
           trap 'security delete-keychain "$KEYCHAIN_PATH" || true' EXIT
-          if [[ -z "${MACOS_CODESIGN_IDENTITY:-}" ]]; then
-            echo "::error::Missing required signing secret: MACOS_CODESIGN_IDENTITY"
-            exit 1
-          fi
-          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "dist/$BINARY_NAME"
-          codesign --verify --strict --verbose=2 "dist/$BINARY_NAME"
+          [[ -n "${MACOS_CODESIGN_IDENTITY:-}" ]] || { echo "::error::Missing signing identity"; exit 1; }
           mkdir -p artifacts
-          ditto -c -k --keepParent "dist/$BINARY_NAME" "artifacts/$BINARY_NAME-macos-arm64.zip"
+          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "dist/$BINARY_NAME"
+          codesign --verify --deep --strict --verbose=2 "dist/$BINARY_NAME"
+          (
+            cd dist
+            ditto -c -k --norsrc --noextattr --noqtn --noacl \
+              "$BINARY_NAME" "../artifacts/$BINARY_NAME-macos-arm64.zip"
+          )
           if [[ -n "${APPLE_API_KEY_ID:-}" && -n "${APPLE_API_ISSUER_ID:-}" && -f "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" ]]; then
-            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
-              --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" \
-              --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER_ID" \
-              --wait
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait
           elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_ID_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
-            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_ID_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           else
-            echo "::error::Missing notarization credentials. Configure APPLE_API_KEY_* secrets or APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID."
+            echo "::error::Missing notarization credentials"
             exit 1
           fi
-          xcrun stapler staple "artifacts/$BINARY_NAME-macos-arm64.zip" || \
-            echo "::notice::Notarization succeeded; zip stapling is not required for this CLI artifact."
+          bash scripts/verify_macos_artifact.sh \
+            "artifacts/$BINARY_NAME-macos-arm64.zip" \
+            "$BINARY_NAME" \
+            "${RELEASE_TAG#v}"
+      - name: Generate final macOS artifact SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: artifacts/${{ env.BINARY_NAME }}-macos-arm64.zip
+          format: cyclonedx-json
+          output-file: artifacts/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
+          upload-artifact: false
+          upload-release-assets: false
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos-arm64
@@ -248,32 +302,44 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish signed release
+    name: Publish verified release
+    needs: [verify, linux, macos]
     runs-on: ubuntu-24.04
-    needs: [linux, macos]
     if: startsWith(github.ref_name, 'v')
     permissions:
       contents: write
       attestations: write
       artifact-metadata: write
       id-token: write
+    outputs:
+      formula_asset: ${{ steps.final_checksums.outputs.formula_asset }}
+      formula_sha256: ${{ steps.final_checksums.outputs.formula_sha256 }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
-      - name: Generate checksums
+      - name: Generate final checksums
+        id: final_checksums
         shell: bash
         run: |
+          set -euo pipefail
           cd release-assets
-          find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%P\0' | \
-            sort -z | xargs -0 sha256sum > SHA256SUMS
+          checksum_file="$(mktemp "${RUNNER_TEMP}/SHA256SUMS.XXXXXX")"
+          trap 'rm -f "${checksum_file}"' EXIT
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > "${checksum_file}"
+          mv "${checksum_file}" SHA256SUMS
+          trap - EXIT
+          sha256sum -c SHA256SUMS
+          formula_asset="${BINARY_NAME}-macos-arm64.zip"
+          [[ -f "${formula_asset}" ]] || { echo "::error::Missing Homebrew release asset: ${formula_asset}"; exit 1; }
+          formula_sha256="$(sha256sum "${formula_asset}" | awk '{print $1}')"
+          [[ "${formula_sha256}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid Homebrew asset SHA-256"; exit 1; }
+          {
+            echo "formula_asset=${formula_asset}"
+            echo "formula_sha256=${formula_sha256}"
+          } >> "${GITHUB_OUTPUT}"
       - name: Generate artifact provenance attestations
         if: github.event.repository.private == false
         uses: actions/attest@v4
@@ -281,49 +347,167 @@ jobs:
           subject-path: release-assets/*
       - name: Note skipped artifact attestations
         if: github.event.repository.private
-        run: echo "::notice::Artifact attestations are skipped while this repository is private. They will run for public release tags."
+        run: echo "::notice::Artifact attestations are skipped while this repository is private."
       - name: Validate Homebrew tap token
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
         shell: bash
         run: |
-          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
-            echo "::error::Missing HOMEBREW_TAP_TOKEN_2. Create a fine-grained token scoped to ${HOMEBREW_TAP_REPO} contents and pull requests."
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Missing HOMEBREW_TAP_TOKEN_2. Configure a fine-grained token for ${HOMEBREW_TAP_REPO} with Contents and Pull requests read/write access."
             exit 1
           fi
-      - name: Publish draft release with all assets
+          repo_info="$(gh api "repos/${HOMEBREW_TAP_REPO}" --jq '[.full_name, (.permissions.push // false), (.allow_auto_merge // false)] | @tsv')"
+          IFS=$'\t' read -r actual_repo can_push auto_merge <<< "${repo_info}"
+          if [[ "${actual_repo}" != "${HOMEBREW_TAP_REPO}" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 resolved unexpected repository ${actual_repo}."
+            exit 1
+          fi
+          if [[ "${can_push}" != "true" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 cannot push release branches to ${HOMEBREW_TAP_REPO}."
+            exit 1
+          fi
+          if [[ "${auto_merge}" != "true" ]]; then
+            echo "::error::${HOMEBREW_TAP_REPO} must enable auto-merge before product releases are published."
+            exit 1
+          fi
+          gh pr list --repo "${HOMEBREW_TAP_REPO}" --state open --limit 1 >/dev/null
+      - name: Publish or resume verified draft release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists. Create a new tag instead of mutating release assets."
+          set -euo pipefail
+          RELEASE_TAG="${RELEASE_TAG:-}"
+          if [[ -z "${RELEASE_TAG}" ]]; then
+            echo "::error::RELEASE_TAG must be set by the workflow environment."
             exit 1
           fi
-          gh release create "$RELEASE_TAG" release-assets/* --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
-          gh release edit "$RELEASE_TAG" --draft=false
-      - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.HOMEBREW_TAP_REPO }}
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
-          path: homebrew-tap
-          persist-credentials: false
-      - name: Update Homebrew formula
+          readonly RELEASE_TAG
+          local_assets="${RUNNER_TEMP}/local-release-assets.tsv"
+          remote_assets="${RUNNER_TEMP}/remote-release-assets.tsv"
+          remote_assets_tmp="${RUNNER_TEMP}/remote-release-assets.tmp"
+          : > "${local_assets}"
+          while IFS= read -r -d '' asset_path; do
+            asset_name="${asset_path#release-assets/}"
+            asset_digest="$(sha256sum "${asset_path}" | awk '{print $1}')"
+            [[ "${asset_digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid local digest for ${asset_name}"; exit 1; }
+            printf '%s\tsha256:%s\n' "${asset_name}" "${asset_digest}" >> "${local_assets}"
+          done < <(find release-assets -maxdepth 1 -type f -print0)
+          LC_ALL=C sort -o "${local_assets}" "${local_assets}"
+
+          verify_remote_assets() {
+            local attempt
+            for attempt in {1..24}; do
+              if gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+                --jq '.[] | [.name, (.digest // "")] | @tsv' > "${remote_assets_tmp}"; then
+                LC_ALL=C sort "${remote_assets_tmp}" > "${remote_assets}"
+                if cmp -s "${local_assets}" "${remote_assets}"; then
+                  return 0
+                fi
+              fi
+              echo "::notice::Waiting for exact remote asset digests (attempt ${attempt}/24)."
+              sleep 5
+            done
+            return 1
+          }
+
+          release_exists=false
+          if release_info="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName --jq '[.databaseId, .tagName, .isDraft] | @tsv' 2>/dev/null)"; then
+            release_exists=true
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+            release_info="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName --jq '[.databaseId, .tagName, .isDraft] | @tsv')"
+          fi
+          IFS=$'\t' read -r release_id release_tag release_is_draft <<< "${release_info}"
+          [[ "${release_id}" =~ ^[0-9]+$ ]] || { echo "::error::Unable to resolve release ID"; exit 1; }
+          [[ "${release_tag}" == "${RELEASE_TAG}" ]] || { echo "::error::Release tag identity mismatch"; exit 1; }
+          [[ "${release_is_draft}" == "true" || "${release_is_draft}" == "false" ]] || { echo "::error::Invalid release draft state"; exit 1; }
+          tag_commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq '.sha')"
+          [[ "${tag_commit}" == "${GITHUB_SHA}" ]] || { echo "::error::Release tag target does not match the workflow commit"; exit 1; }
+
+          if [[ "${release_is_draft}" == "false" ]]; then
+            if verify_remote_assets; then
+              echo "Existing public release ${RELEASE_TAG} exactly matches the rebuilt verified assets; continuing without mutation."
+              exit 0
+            fi
+            echo "::error::Existing public release does not exactly match the rebuilt verified assets and must never be mutated."
+            exit 1
+          fi
+          if [[ "${release_exists}" == "true" ]]; then
+            echo "Resuming existing draft release ${RELEASE_TAG}."
+          fi
+
+          gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          if ! verify_remote_assets; then
+            echo "::error::Remote release asset names and digests do not exactly match the verified local set."
+            echo "Expected assets:"
+            sed 's/^/  /' "${local_assets}"
+            echo "Remote assets:"
+            if [[ -f "${remote_assets}" ]]; then sed 's/^/  /' "${remote_assets}"; fi
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+  homebrew:
+    name: Promote verified Homebrew formula
+    needs: publish
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref_name, 'v')
+    permissions:
+      contents: read
+    env:
+      FORMULA_ASSET: ${{ needs.publish.outputs.formula_asset }}
+      FORMULA_SHA256: ${{ needs.publish.outputs.formula_sha256 }}
+    steps:
+      - name: Validate Homebrew tap token
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
         shell: bash
         run: |
           set -euo pipefail
-          asset="${BINARY_NAME}-macos-arm64.zip"
-          sha256="$(sha256sum "release-assets/${asset}" | awk '{print $1}')"
-          python3 homebrew-tap/scripts/update_formula.py \
-            --formula "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb" \
+          [[ -n "${GH_TOKEN:-}" ]] || { echo "::error::Missing HOMEBREW_TAP_TOKEN_2"; exit 1; }
+          tap_access="$(gh api "repos/${HOMEBREW_TAP_REPO}" --jq '[.full_name, (.permissions.push // false), (.allow_auto_merge // false)] | @tsv')"
+          [[ "${tap_access}" == "${HOMEBREW_TAP_REPO}"$'\ttrue\ttrue' ]] || {
+            echo "::error::The tap token needs push access and ${HOMEBREW_TAP_REPO} must have auto-merge enabled"
+            exit 1
+          }
+          gh pr list --repo "${HOMEBREW_TAP_REPO}" --state open --limit 1 >/dev/null
+      - name: Checkout Homebrew tap main
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          path: homebrew-tap
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Update Homebrew formula from verified asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${FORMULA_ASSET}" == "${BINARY_NAME}-macos-arm64.zip" ]] || { echo "::error::Unexpected Homebrew asset"; exit 1; }
+          [[ "${FORMULA_SHA256}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid Homebrew asset SHA-256"; exit 1; }
+          cd homebrew-tap
+          branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
+          git checkout -B "${branch}" refs/remotes/origin/main
+          python3 scripts/update_formula.py \
+            --formula "Formula/${HOMEBREW_FORMULA}.rb" \
             --repo "${GITHUB_REPOSITORY}" \
             --version "${RELEASE_TAG}" \
-            --asset "${asset}" \
-            --sha256 "${sha256}" \
-            --binary "${BINARY_NAME}"
-          ruby -c "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb"
-      - name: Open Homebrew tap pull request
+            --asset "${FORMULA_ASSET}" \
+            --sha256 "${FORMULA_SHA256}" \
+            --binary "${BINARY_NAME}" \
+            --legacy-exceptions "config/legacy-dist-exceptions.json"
+          ruby -c "Formula/${HOMEBREW_FORMULA}.rb"
+      - name: Create or update Homebrew tap pull request
+        id: homebrew_pr
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
         shell: bash
@@ -331,24 +515,98 @@ jobs:
           set -euo pipefail
           cd homebrew-tap
           branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
+          [[ "$(git branch --show-current)" == "${branch}" ]] || { echo "::error::Unexpected tap branch"; exit 1; }
+          remote_url="$(git remote get-url origin)"
+          [[ "${remote_url}" == "https://github.com/${HOMEBREW_TAP_REPO}" || "${remote_url}" == "https://github.com/${HOMEBREW_TAP_REPO}.git" ]] || {
+            echo "::error::Unexpected Homebrew tap remote: ${remote_url}"
+            exit 1
+          }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "${branch}"
-          git add "Formula/${HOMEBREW_FORMULA}.rb"
+          git add "Formula/${HOMEBREW_FORMULA}.rb" "config/legacy-dist-exceptions.json"
           if git diff --cached --quiet; then
-            echo "No Homebrew formula changes."
+            echo "::notice::${HOMEBREW_FORMULA} already points at ${RELEASE_TAG}; no tap pull request is required."
+            echo "pr_number=" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           git commit -m "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}"
-          gh auth setup-git -h github.com
-          git push --force-with-lease origin "${branch}"
-          if gh pr list --repo "${HOMEBREW_TAP_REPO}" --head "${branch}" --json number --jq '.[0].number // empty' | grep -q .; then
-            echo "Homebrew tap pull request already exists."
+          gh auth setup-git --hostname github.com
+          remote_sha="$(git ls-remote --heads origin "refs/heads/${branch}" | awk 'NR == 1 { print $1 }')"
+          if [[ -n "${remote_sha}" ]]; then
+            git push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:refs/heads/${branch}"
           else
+            git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+          fi
+          pr_number="$(gh pr list \
+            --repo "${HOMEBREW_TAP_REPO}" \
+            --state open \
+            --base main \
+            --head "${branch}" \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [[ -z "${pr_number}" ]]; then
             gh pr create \
               --repo "${HOMEBREW_TAP_REPO}" \
               --base main \
               --head "${branch}" \
               --title "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}" \
-              --body "Updates ${HOMEBREW_FORMULA} to ${RELEASE_TAG} from ${GITHUB_REPOSITORY}."
+              --body "Updates ${HOMEBREW_FORMULA} to ${RELEASE_TAG} from ${GITHUB_REPOSITORY} using its verified macOS release asset." \
+              >/dev/null
+            pr_number="$(gh pr list \
+              --repo "${HOMEBREW_TAP_REPO}" \
+              --state open \
+              --base main \
+              --head "${branch}" \
+              --json number \
+              --jq '.[0].number // empty')"
           fi
+          [[ "${pr_number}" =~ ^[0-9]+$ ]] || { echo "::error::Unable to create or locate the Homebrew tap pull request"; exit 1; }
+          echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
+      - name: Request Homebrew tap auto-merge after required checks
+        if: steps.homebrew_pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          PR_NUMBER: ${{ steps.homebrew_pr.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]] || { echo "::error::Invalid Homebrew tap pull request number"; exit 1; }
+          gh pr merge "${PR_NUMBER}" --repo "${HOMEBREW_TAP_REPO}" --auto --squash --delete-branch
+      - name: Wait for Homebrew formula merge
+        if: steps.homebrew_pr.outputs.pr_number != ''
+        timeout-minutes: 125
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          PR_NUMBER: ${{ steps.homebrew_pr.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]] || { echo "::error::Invalid Homebrew tap pull request number"; exit 1; }
+          deadline=$((SECONDS + 7200))
+          view_failures=0
+          while (( SECONDS < deadline )); do
+            if state="$(gh pr view "${PR_NUMBER}" --repo "${HOMEBREW_TAP_REPO}" --json state --jq '.state' 2>/dev/null)"; then
+              view_failures=0
+              case "${state}" in
+                MERGED)
+                  echo "Homebrew tap pull request #${PR_NUMBER} merged."
+                  exit 0
+                  ;;
+                CLOSED)
+                  echo "::error::Homebrew tap pull request #${PR_NUMBER} closed without merging."
+                  exit 1
+                  ;;
+                OPEN)
+                  ;;
+                *)
+                  echo "::warning::Unexpected Homebrew tap pull request state: ${state}"
+                  ;;
+              esac
+            else
+              view_failures=$((view_failures + 1))
+              echo "::warning::Unable to read Homebrew tap pull request state (attempt ${view_failures}); retrying."
+            fi
+            sleep 30
+          done
+          echo "::error::Timed out after 2 hours waiting for Homebrew tap pull request #${PR_NUMBER} to merge."
+          exit 1

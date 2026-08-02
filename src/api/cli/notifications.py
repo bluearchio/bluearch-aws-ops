@@ -5,7 +5,7 @@ def alarm(config_targets: bool = Option(False, "--config-targets", "-c", help="C
     Manage CloudWatch Alarms and notification targets for recommendations.
 
     [yellow]Example:[/yellow]
-    [green]bluearch alarm --config-targets[/green]
+    [green]bluearch-aws-ops alarm --config-targets[/green]
     """
     from aws.misc.error_handlings import error_handler
     from aws.misc.alarm_ui import configure_alarms, configure_targets

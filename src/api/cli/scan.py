@@ -1,4 +1,4 @@
-"""Scan command backed by bluearch-core."""
+"""Scan command backed by bluearch-aws-core."""
 
 from datetime import datetime, timezone
 import time
@@ -42,18 +42,18 @@ def scan(
     ),
 ):
     """
-    Scan AWS resources through bluearch-core and store results in the shared DB.
+    Scan AWS resources through bluearch-aws-core and store results in the shared DB.
 
     [yellow]Runs locally — no CloudFormation deployment required.[/yellow]
 
     [green]Examples:[/green]
-      bluearch scan                          # Scan all services, US regions
-      bluearch scan -s ec2,rds               # Scan only EC2 and RDS
-      bluearch scan -r us-east-1,eu-west-1   # Scan specific regions
-      bluearch scan -r all                   # Scan all enabled regions
-      bluearch scan --skip-scan              # Reuse recent data if available
-      bluearch scan --force                  # Force rescan even if data is fresh
-      bluearch scan --cloud                  # Trigger cloud scan via Step Functions
+      bluearch-aws-ops scan                          # Scan all services, US regions
+      bluearch-aws-ops scan -s ec2,rds               # Scan only EC2 and RDS
+      bluearch-aws-ops scan -r us-east-1,eu-west-1   # Scan specific regions
+      bluearch-aws-ops scan -r all                   # Scan all enabled regions
+      bluearch-aws-ops scan --skip-scan              # Reuse recent data if available
+      bluearch-aws-ops scan --force                  # Force rescan even if data is fresh
+      bluearch-aws-ops scan --cloud                  # Trigger cloud scan via Step Functions
     """
     if cloud:
         _run_cloud_scan(services, regions)
@@ -75,7 +75,7 @@ def scan(
 
 
 def _run_core_scan(services_str, regions_str):
-    """Submit a scan to bluearch-core and wait for completion."""
+    """Submit a scan to bluearch-aws-core and wait for completion."""
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
     from utils.core_client import request_core
@@ -86,7 +86,7 @@ def _run_core_scan(services_str, regions_str):
     region_list = _csv(regions_str)
 
     console.print()
-    console.print("[bold]BlueArch Scan[/bold] [dim](bluearch-core)[/dim]")
+    console.print("[bold]BlueArch Scan[/bold] [dim](bluearch-aws-core)[/dim]")
     console.print()
 
     job = request_core(
@@ -274,7 +274,7 @@ def _run_cloud_scan(services_str: Optional[str], regions_str: Optional[str]) -> 
     if execution_arn is None:
         console.print(
             "[bold red]Cloud scan requires deployed infrastructure. "
-            "Run `bluearch setup` first or use local scan (default).[/bold red]"
+            "Run `bluearch-aws-ops setup wizard` first or use local scan (default).[/bold red]"
         )
         raise SystemExit(1)
 
@@ -282,6 +282,6 @@ def _run_cloud_scan(services_str: Optional[str], regions_str: Optional[str]) -> 
     console.print()
     console.print(
         "[yellow]Check execution status in the AWS Step Functions console "
-        "or run `bluearch scan` (local) to collect results.[/yellow]"
+        "or run `bluearch-aws-ops scan` (local) to collect results.[/yellow]"
     )
     # TODO: sync S3 results into SQLite after execution completes

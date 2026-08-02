@@ -80,7 +80,10 @@ class ErrorHandler:
         self.console.print(f"[red]An error occurred: {str(error)}[/red]")
 
     def _handle_missing_cloudformation_stack(self):
-        self.console.print("[yellow]CloudFormation stack not found. Please deploy the stack first:[/yellow] [bold blue]bluearch deploy[/bold blue]")
+        self.console.print(
+            "[yellow]CloudFormation stack not found. Configure cross-account infrastructure with:[/yellow] "
+            "[bold blue]bluearch-aws-ops setup multi-account --complete[/bold blue]"
+        )
 
     def _get_no_credentials_error_message(self):
         message = Text("Please set up your AWS access using one of the following methods:", style="bold red")
@@ -132,7 +135,10 @@ class ErrorHandler:
         if "Unable to locate credentials" in error_message:
             self._handle_no_credentials_error()
         elif "Requested resource not found" in error_message:
-            self.console.print("[red]Requested resource not found. Please make sure you have deployed the application. To do so, run [/red][bold blue]'bluearch configure'[/bold blue]")
+            self.console.print(
+                "[red]Requested resource not found. Refresh local data with [/red]"
+                "[bold blue]'bluearch-aws-ops scan'[/bold blue]"
+            )
         else:
             self.console.print(f"[red]Unexpected error: {error_message}[/red]")
         log.debug(traceback.format_exc())

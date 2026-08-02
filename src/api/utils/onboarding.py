@@ -121,9 +121,9 @@ def run_onboarding():
     console.print()
     console.print(Panel(
         "[bold]You're all set! Here's what to do next:[/bold]\n\n"
-        "  [cyan]bluearch scan[/cyan]                  Scan your AWS resources\n"
-        "  [cyan]bluearch show-recommendations[/cyan]  View findings\n"
-        "  [cyan]bluearch-core start --daemon[/cyan]   Launch core and web dashboards",
+        "  [cyan]bluearch-aws-ops scan[/cyan]                  Scan your AWS resources\n"
+        "  [cyan]bluearch-aws-ops recommendations[/cyan]       View findings\n"
+        "  [cyan]bluearch-aws-core start --daemon[/cyan]       Launch core and web dashboards",
         title="Next Steps",
         border_style="green",
     ))
@@ -132,7 +132,7 @@ def run_onboarding():
     console.print("[dim]The public build does not send hosted usage analytics.[/dim]")
     console.print("[dim]Runtime data stays local unless you configure your own AWS integrations.[/dim]")
     console.print()
-    console.print("[dim]The web dashboard is served by the local bluearch-core runtime and protected[/dim]")
+    console.print("[dim]The web dashboard is served by the local bluearch-aws-core runtime and protected[/dim]")
     console.print("[dim]with the local service token.[/dim]")
     console.print()
 
@@ -173,7 +173,7 @@ def _show_profiles_table(profiles):
 
 
 def _check_aws_credentials():
-    """Verify AWS credentials through bluearch-core. Returns account info or None."""
+    """Verify AWS credentials through bluearch-aws-core. Returns account info or None."""
     try:
         validation = request_core("GET", "/api/v1/setup/validate", timeout=15.0)
         checks = validation.get("checks") if isinstance(validation, dict) else {}
