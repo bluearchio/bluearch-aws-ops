@@ -121,10 +121,6 @@ install_release() {
   log "Installed ${binary_name} to ${INSTALL_DIR}/${binary_name}"
 }
 
-extract_semver() {
-  awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH); exit }'
-}
-
 version_at_least() {
   local actual="$1"
   local minimum="$2"
@@ -152,6 +148,7 @@ compatible_core_available() {
   local path
   local resolved
   local output
+  local first_line
   local version
   local path_candidate=""
 
@@ -162,8 +159,11 @@ compatible_core_available() {
     [[ -n "$resolved" && -f "$resolved" && -x "$resolved" ]] || continue
     [[ "$(basename "$resolved")" == "$CORE_BINARY_NAME" ]] || continue
     output="$("$resolved" --version 2>/dev/null)" || continue
-    version="$(printf '%s\n' "$output" | extract_semver)"
-    [[ -n "$version" ]] || continue
+    first_line="${output%%$'\n'*}"
+    [[ "$first_line" == "${CORE_BINARY_NAME} "* ]] || continue
+    version="${first_line#"${CORE_BINARY_NAME} "}"
+    [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    version="${version#v}"
     version_at_least "$version" "$MINIMUM_CORE_VERSION" || continue
     return 0
   done

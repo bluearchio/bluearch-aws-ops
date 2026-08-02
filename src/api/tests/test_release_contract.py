@@ -67,6 +67,10 @@ def test_release_verifies_final_artifacts_without_inline_stamping_or_tap_mutatio
     assert "--keepParent" not in macos_commands
     assert "--norsrc --noextattr --noqtn --noacl" in macos_commands
     assert "cd dist" in macos_commands
+    linux_verifier = (ROOT / "scripts" / "verify_linux_artifact.sh").read_text(encoding="utf-8")
+    macos_verifier = (ROOT / "scripts" / "verify_macos_artifact.sh").read_text(encoding="utf-8")
+    assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in linux_verifier
+    assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in macos_verifier
 
 
 def test_publish_commands_are_explicitly_repository_scoped() -> None:

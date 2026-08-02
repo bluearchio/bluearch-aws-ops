@@ -31,6 +31,11 @@ BINARY_PATH="$VERIFY_DIR/$PUBLIC_BINARY_NAME"
 codesign --verify --deep --strict --verbose=2 "$BINARY_PATH"
 spctl --assess --type execute --verbose=4 "$BINARY_PATH"
 lipo -verify_arch arm64 "$BINARY_PATH"
-"$BINARY_PATH" --version | grep -F "$EXPECTED_VERSION"
+VERSION_OUTPUT="$("$BINARY_PATH" --version)"
+VERSION_LINE="${VERSION_OUTPUT%%$'\n'*}"
+[[ "$VERSION_LINE" == "$PUBLIC_BINARY_NAME $EXPECTED_VERSION" ]] || {
+  echo "artifact version identity must be: $PUBLIC_BINARY_NAME $EXPECTED_VERSION" >&2
+  exit 1
+}
 "$BINARY_PATH" --help >/dev/null
 "$BINARY_PATH" scan --help >/dev/null
