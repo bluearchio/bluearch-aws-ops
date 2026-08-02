@@ -291,6 +291,16 @@ def test_macos_unsigned_artifact_contract_installs_pytest_mock_first() -> None:
     )
 
 
+def test_macos_unsigned_artifact_contract_requires_arm64_only_binary() -> None:
+    macos_verifier = (ROOT / "scripts" / "verify_macos_artifact.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'ARCHITECTURES="$(lipo -archs "$BINARY_PATH")"' in macos_verifier
+    assert '[[ "$ARCHITECTURES" == "arm64" ]]' in macos_verifier
+    assert "lipo -verify_arch" not in macos_verifier
+
+
 def test_macos_release_waits_for_notarization_and_checks_the_standalone_cli() -> None:
     macos_steps = _workflow()["jobs"]["macos"]["steps"]
     release_commands = next(
@@ -549,7 +559,7 @@ def test_committed_versions_are_bare_and_equal() -> None:
         re.MULTILINE,
     ).group(1)
 
-    assert project_version == runtime_version == "0.13.5"
+    assert project_version == runtime_version == "0.13.6"
     assert re.fullmatch(r"\d+\.\d+\.\d+", project_version)
 
 
