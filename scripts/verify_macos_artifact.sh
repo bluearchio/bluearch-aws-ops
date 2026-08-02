@@ -39,8 +39,7 @@ ARCHITECTURES="$(lipo -archs "$BINARY_PATH")"
   exit 1
 }
 VERSION_OUTPUT="$("$BINARY_PATH" --version)"
-VERSION_LINE="${VERSION_OUTPUT%%$'\n'*}"
-[[ "$VERSION_LINE" == "$PUBLIC_BINARY_NAME $EXPECTED_VERSION" ]] || {
+[[ "$VERSION_OUTPUT" == "$PUBLIC_BINARY_NAME $EXPECTED_VERSION" ]] || {
   echo "artifact version identity must be: $PUBLIC_BINARY_NAME $EXPECTED_VERSION" >&2
   exit 1
 }

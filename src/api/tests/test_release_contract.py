@@ -272,6 +272,8 @@ def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
     macos_verifier = (ROOT / "scripts" / "verify_macos_artifact.sh").read_text(encoding="utf-8")
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in linux_verifier
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in macos_verifier
+    assert "VERSION_LINE=" not in linux_verifier
+    assert "VERSION_LINE=" not in macos_verifier
 
 
 def test_macos_unsigned_artifact_contract_installs_pytest_mock_first() -> None:
@@ -559,8 +561,31 @@ def test_committed_versions_are_bare_and_equal() -> None:
         re.MULTILINE,
     ).group(1)
 
-    assert project_version == runtime_version == "0.13.6"
+    assert project_version == runtime_version == "0.13.7"
     assert re.fullmatch(r"\d+\.\d+\.\d+", project_version)
+
+
+def test_module_version_probe_is_exact_and_stateless(
+    tmp_path: Path, real_subprocess
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update({"HOME": str(home), "PYTHONPATH": str(ROOT / "src" / "api")})
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bluearch", "--version"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "bluearch-aws-ops 0.13.7\n"
+    assert result.stderr == ""
+    assert list(home.iterdir()) == []
 
 
 def test_version_setter_accepts_v_prefixed_semver_and_writes_bare_metadata(
