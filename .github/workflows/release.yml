@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -92,6 +92,100 @@ jobs:
                   f"tag/version mismatch: tag={tag} project={project_version} runtime={runtime_version}"
               )
           PY
+      - name: Validate release credential availability
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MACOS_CERTIFICATE_PWD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD || secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD GH_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required release credential: $name"
+              exit 1
+            fi
+          done
+
+          tap_info="$(gh api "repos/${HOMEBREW_TAP_REPO}" \
+            --jq '[.full_name, (.permissions.push // false), (.allow_auto_merge // false)] | @tsv')"
+          IFS=$'\t' read -r actual_tap can_push auto_merge <<< "$tap_info"
+          if [[ "$actual_tap" != "$HOMEBREW_TAP_REPO" ]]; then
+            echo "::error::Homebrew tap token resolved an unexpected repository"
+            exit 1
+          fi
+          if [[ "$can_push" != true ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 requires push access to the Homebrew tap"
+            exit 1
+          fi
+          if [[ "$auto_merge" != true ]]; then
+            echo "::error::The Homebrew tap must enable auto-merge"
+            exit 1
+          fi
+          gh pr list --repo "$HOMEBREW_TAP_REPO" --state open --limit 1 >/dev/null
+
+          certificate_file="$(mktemp "${RUNNER_TEMP}/release-certificate.XXXXXX.p12")"
+          trap 'rm -f "$certificate_file"' EXIT
+          CERTIFICATE_FILE="$certificate_file" python3 - <<'PY'
+          import base64
+          import binascii
+          import os
+          from pathlib import Path
+
+          encoded = "".join(os.environ["MACOS_CERTIFICATE_P12_BASE64"].split())
+          try:
+              decoded = base64.b64decode(encoded, validate=True)
+          except (binascii.Error, ValueError):
+              raise SystemExit("MACOS_CERTIFICATE_P12_BASE64 is not valid base64")
+          if not decoded:
+              raise SystemExit("MACOS_CERTIFICATE_P12_BASE64 decodes to an empty value")
+          Path(os.environ["CERTIFICATE_FILE"]).write_bytes(decoded)
+          PY
+          if ! openssl pkcs12 -legacy -in "$certificate_file" \
+            -passin env:MACOS_CERTIFICATE_PASSWORD -noout >/dev/null 2>&1; then
+            echo "::error::The signing certificate or its password is invalid"
+            exit 1
+          fi
+          rm -f "$certificate_file"
+          trap - EXIT
+
+          api_notarization_ready=true
+          for name in APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              api_notarization_ready=false
+            fi
+          done
+          apple_id_notarization_ready=true
+          for name in APPLE_ID APPLE_ID_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              apple_id_notarization_ready=false
+            fi
+          done
+          if [[ "$api_notarization_ready" != true && "$apple_id_notarization_ready" != true ]]; then
+            echo "::error::Configure a complete notarization credential set"
+            exit 1
+          fi
+          if [[ "$api_notarization_ready" == true ]]; then
+            python3 - <<'PY'
+          import base64
+          import binascii
+          import os
+
+          encoded = "".join(os.environ["APPLE_API_KEY_P8_BASE64"].split())
+          try:
+              decoded = base64.b64decode(encoded, validate=True)
+          except (binascii.Error, ValueError):
+              raise SystemExit("APPLE_API_KEY_P8_BASE64 is not valid base64")
+          if not decoded:
+              raise SystemExit("APPLE_API_KEY_P8_BASE64 decodes to an empty value")
+          PY
+          fi
       - name: Install test dependencies
         shell: bash
         run: |
@@ -157,14 +251,6 @@ jobs:
             "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" \
             "$BINARY_NAME" \
             "${RELEASE_TAG#v}"
-      - name: Generate final Linux artifact SBOM
-        uses: anchore/sbom-action@v0.24.0
-        with:
-          path: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.tar.gz
-          format: cyclonedx-json
-          output-file: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.cyclonedx.json
-          upload-artifact: false
-          upload-release-assets: false
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux-x86_64
@@ -287,23 +373,64 @@ jobs:
             "artifacts/$BINARY_NAME-macos-arm64.zip" \
             "$BINARY_NAME" \
             "${RELEASE_TAG#v}"
-      - name: Generate final macOS artifact SBOM
-        uses: anchore/sbom-action@v0.24.0
-        with:
-          path: artifacts/${{ env.BINARY_NAME }}-macos-arm64.zip
-          format: cyclonedx-json
-          output-file: artifacts/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
-          upload-artifact: false
-          upload-release-assets: false
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos-arm64
           path: artifacts/*
           if-no-files-found: error
 
+  sbom:
+    name: Generate release SBOMs
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: startsWith(github.ref_name, 'v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Extract final release artifacts for SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            "$RUNNER_TEMP/sbom-linux-x86_64" \
+            "$RUNNER_TEMP/sbom-macos-arm64" \
+            sbom-assets
+          tar --no-same-owner --no-same-permissions \
+            -xzf "release-assets/$BINARY_NAME-linux-x86_64.tar.gz" \
+            -C "$RUNNER_TEMP/sbom-linux-x86_64"
+          unzip -q "release-assets/$BINARY_NAME-macos-arm64.zip" \
+            -d "$RUNNER_TEMP/sbom-macos-arm64"
+          test -x "$RUNNER_TEMP/sbom-linux-x86_64/$BINARY_NAME"
+          test -f "$RUNNER_TEMP/sbom-macos-arm64/$BINARY_NAME"
+      - name: Generate final Linux artifact SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: ${{ runner.temp }}/sbom-linux-x86_64
+          format: cyclonedx-json
+          output-file: sbom-assets/${{ env.BINARY_NAME }}-linux-x86_64.cyclonedx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate final macOS artifact SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: ${{ runner.temp }}/sbom-macos-arm64
+          format: cyclonedx-json
+          output-file: sbom-assets/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-sboms
+          path: sbom-assets/*
+          if-no-files-found: error
+
   publish:
     name: Publish verified release
-    needs: [verify, linux, macos]
+    needs: [verify, linux, macos, sbom]
     runs-on: ubuntu-24.04
     if: startsWith(github.ref_name, 'v')
     permissions:
