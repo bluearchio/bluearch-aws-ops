@@ -29,7 +29,10 @@ BINARY_PATH="$VERIFY_DIR/$PUBLIC_BINARY_NAME"
 }
 
 codesign --verify --deep --strict --verbose=2 "$BINARY_PATH"
-spctl --assess --type execute --verbose=4 "$BINARY_PATH"
+codesign -vvvv \
+  -R="notarized" \
+  --check-notarization \
+  "$BINARY_PATH"
 lipo -verify_arch arm64 "$BINARY_PATH"
 VERSION_OUTPUT="$("$BINARY_PATH" --version)"
 VERSION_LINE="${VERSION_OUTPUT%%$'\n'*}"
