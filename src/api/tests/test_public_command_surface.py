@@ -19,7 +19,7 @@ def test_main_help_uses_the_public_scan_and_recommendations_commands(monkeypatch
     assert "bluearch web start" not in result.output
 
 
-def test_version_identifies_public_ops_and_trusts_before_outdated():
+def test_version_is_one_exact_machine_readable_public_identity():
     result = CliRunner().invoke(
         bluearch.cli_app,
         ["--version"],
@@ -27,18 +27,7 @@ def test_version_identifies_public_ops_and_trusts_before_outdated():
     )
 
     assert result.exit_code == 0
-    assert result.output.splitlines()[0] == "bluearch-aws-ops 0.13.6"
-    core_trust = "brew trust --formula bluearchio/tap/bluearch-aws-core"
-    ops_trust = "brew trust --formula bluearchio/tap/bluearch-aws-ops"
-    outdated = "brew outdated bluearchio/tap/bluearch-aws-ops"
-    assert core_trust in result.output
-    assert ops_trust in result.output
-    assert outdated in result.output
-    assert (
-        result.output.index(core_trust)
-        < result.output.index(ops_trust)
-        < result.output.index(outdated)
-    )
+    assert result.output == "bluearch-aws-ops 0.13.7\n"
 
 
 def test_web_help_hides_the_core_managed_start_command():
