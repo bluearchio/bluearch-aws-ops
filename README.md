@@ -15,19 +15,32 @@ This repo is not the shared runtime. It does not own account context, shared per
 
 ## Install
 
-Trust the Core and Ops formulas individually before installation. Formula-specific trust approves only those formulas,
-which is narrower in scope than trusting the entire tap.
-`brew install bluearchio/tap/bluearch-aws-ops` installs Core automatically because the Ops formula declares
-`depends_on "bluearch-aws-core"`. That is why both exact formulas are trusted, but only Ops is installed explicitly.
+Installing a fully qualified formula automatically adds the tap and trusts only
+that formula. Install Core explicitly first so Homebrew records trust for the
+separate dependency before resolving Ops. A separate `brew tap` or `brew trust`
+command is not needed for a first-time install. See
+[Homebrew's tap-trust documentation](https://docs.brew.sh/Tap-Trust).
 
 ```bash
-brew tap bluearchio/tap
-brew trust --formula bluearchio/tap/bluearch-aws-core
-brew trust --formula bluearchio/tap/bluearch-aws-ops
+brew install bluearchio/tap/bluearch-aws-core
 brew install bluearchio/tap/bluearch-aws-ops
 bluearch-aws-core start --daemon
 bluearch-aws-ops scan
 bluearch-aws-ops recommendations
+```
+
+`brew tap bluearchio/tap` only downloads and registers the repository; it does
+not grant trust. Whole-tap trust is unnecessary.
+
+### Recovery for an existing tap
+
+If an existing or partially completed installation refuses to load either
+formula, trust only Core and Ops, then retry the product installation:
+
+```bash
+brew trust --formula bluearchio/tap/bluearch-aws-core
+brew trust --formula bluearchio/tap/bluearch-aws-ops
+brew install bluearchio/tap/bluearch-aws-ops
 ```
 
 Linux:
