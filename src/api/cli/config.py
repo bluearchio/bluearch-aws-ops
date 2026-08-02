@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from typer import Option
 CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
 OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
 PUBLIC_FORMULAS = frozenset({CORE_FORMULA, OPS_FORMULA})
+CORE_FORMULA_NAME = "bluearch-aws-core"
+PUBLIC_CORE_EXECUTABLE = "bluearch-aws-core"
+PUBLIC_CORE_VERSION_RE = re.compile(
+    rf"{re.escape(PUBLIC_CORE_EXECUTABLE)} ([0-9]+\.[0-9]+\.[0-9]+)"
+)
+SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
 PUBLIC_OPS_VERSION_RE = re.compile(
     rf"{re.escape(PUBLIC_OPS_EXECUTABLE)} [0-9]+\.[0-9]+\.[0-9]+"
@@ -70,11 +77,125 @@ def _run_trusted_homebrew_outdated(formula: str = OPS_FORMULA):
     return result
 
 
-def _installed_public_core_satisfies(required_core_version: str) -> bool:
-    """Execute the resolved public Core and enforce its minimum version."""
-    from utils.core_client import core_version_satisfies, get_installed_core_version
+def _canonical_homebrew_executable() -> Path | None:
+    """Return one absolute, canonical Homebrew executable from PATH."""
+    candidate = shutil.which("brew")
+    if not candidate or not Path(candidate).is_absolute():
+        return None
+    try:
+        resolved = Path(candidate).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if resolved.name != "brew" or not resolved.is_file() or not os.access(resolved, os.X_OK):
+        return None
+    return resolved
 
-    return core_version_satisfies(get_installed_core_version(), required_core_version)
+
+def _single_absolute_directory(result: subprocess.CompletedProcess) -> Path | None:
+    """Parse one existing absolute directory from a successful command."""
+    if result.returncode != 0:
+        return None
+    lines = (result.stdout or "").splitlines()
+    if len(lines) != 1:
+        return None
+    candidate = Path(lines[0])
+    if not candidate.is_absolute():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return resolved if resolved.is_dir() else None
+
+
+def _formula_owned_core_binary() -> Path | None:
+    """Resolve Core only from the exact trusted formula's active Cellar prefix."""
+    brew = _canonical_homebrew_executable()
+    if brew is None:
+        return None
+
+    verification_env = os.environ.copy()
+    verification_env.pop("BLUEARCH_CORE_BINARY", None)
+    verification_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    try:
+        prefix_result = subprocess.run(
+            [str(brew), "--prefix", CORE_FORMULA],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=verification_env,
+        )
+        cellar_result = subprocess.run(
+            [str(brew), "--cellar"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=verification_env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    prefix = _single_absolute_directory(prefix_result)
+    cellar = _single_absolute_directory(cellar_result)
+    if prefix is None or cellar is None:
+        return None
+    try:
+        prefix_parts = prefix.relative_to(cellar).parts
+    except ValueError:
+        return None
+    if len(prefix_parts) != 2 or prefix_parts[0] != CORE_FORMULA_NAME:
+        return None
+
+    candidate = prefix / "bin" / PUBLIC_CORE_EXECUTABLE
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(prefix)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if (
+        resolved.name != PUBLIC_CORE_EXECUTABLE
+        or not resolved.is_file()
+        or not os.access(resolved, os.X_OK)
+    ):
+        return None
+    return resolved
+
+
+def _version_tuple(version: str) -> tuple[int, int, int] | None:
+    """Parse the release's strict three-part numeric version contract."""
+    if not SEMVER_RE.fullmatch(str(version or "")):
+        return None
+    return tuple(int(part) for part in str(version).split("."))
+
+
+def _installed_public_core_satisfies(required_core_version: str) -> bool:
+    """Verify the exact trusted-formula Core binary and enforce its minimum."""
+    required = _version_tuple(required_core_version)
+    if required is None:
+        return False
+    binary = _formula_owned_core_binary()
+    if binary is None:
+        return False
+
+    verification_env = os.environ.copy()
+    verification_env.pop("BLUEARCH_CORE_BINARY", None)
+    verification_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    try:
+        result = subprocess.run(
+            [str(binary), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=verification_env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    lines = (result.stdout or "").splitlines()
+    if result.returncode != 0 or len(lines) != 1:
+        return False
+    match = PUBLIC_CORE_VERSION_RE.fullmatch(lines[0])
+    installed = _version_tuple(match.group(1)) if match else None
+    return installed is not None and installed >= required
 
 
 def _update_homebrew_core(required_core_version: str) -> bool:
