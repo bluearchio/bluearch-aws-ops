@@ -63,6 +63,58 @@ def test_release_source_gate_rejects_v_named_branches_and_ambiguous_refs() -> No
     assert 'git rev-list -n 1 "$RELEASE_TAG"' not in verify_commands
 
 
+def test_release_credentials_fail_fast_before_tests_and_builds() -> None:
+    verify_steps = _workflow()["jobs"]["verify"]["steps"]
+    names = [step.get("name") for step in verify_steps]
+    credentials = next(
+        step for step in verify_steps if step.get("name") == "Validate release credential availability"
+    )
+    environment = credentials["env"]
+    commands = credentials["run"]
+
+    assert names.index("Verify tag, committed version, and main SHA") < names.index(
+        "Validate release credential availability"
+    ) < names.index("Install test dependencies")
+    assert environment["MACOS_CERTIFICATE_P12_BASE64"] == (
+        "${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || "
+        "secrets.MACOS_CERTIFICATE }}"
+    )
+    assert environment["MACOS_CERTIFICATE_PASSWORD"] == (
+        "${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD || "
+        "secrets.MACOS_CERTIFICATE_PWD }}"
+    )
+    assert environment["APPLE_ID_PASSWORD"] == (
+        "${{ secrets.APPLE_ID_PASSWORD || secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
+    )
+    assert environment["GH_TOKEN"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
+    assert "HOMEBREW_TAP_TOKEN_2" not in environment
+    for name in (
+        "APPLE_API_KEY_P8_BASE64",
+        "APPLE_API_KEY_ID",
+        "APPLE_API_ISSUER_ID",
+        "APPLE_ID",
+        "APPLE_ID_PASSWORD",
+        "APPLE_TEAM_ID",
+    ):
+        assert name in environment
+        assert name in commands
+    assert 'validate_base64("MACOS_CERTIFICATE_P12_BASE64")' in commands
+    assert 'base64.b64decode(encoded, validate=True)' in commands
+    assert "api_notarization_ready" in commands
+    assert "apple_id_notarization_ready" in commands
+    assert "${!name:-}" in commands
+    assert 'gh api "repos/${HOMEBREW_TAP_REPO}"' in commands
+    assert ".permissions.push // false" in commands
+    assert ".allow_auto_merge // false" in commands
+    assert '"$actual_tap" != "$HOMEBREW_TAP_REPO"' in commands
+    assert '"$can_push" != true' in commands
+    assert '"$auto_merge" != true' in commands
+    assert 'gh pr list --repo "$HOMEBREW_TAP_REPO" --state open --limit 1' in commands
+    assert 'echo "$GH_TOKEN"' not in commands
+    assert 'echo "${GH_TOKEN' not in commands
+    assert "set -x" not in commands
+
+
 def test_normal_ci_runs_on_dev_and_main() -> None:
     workflow = yaml.load(CI_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
@@ -146,6 +198,42 @@ def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
     macos_verifier = (ROOT / "scripts" / "verify_macos_artifact.sh").read_text(encoding="utf-8")
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in linux_verifier
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in macos_verifier
+
+
+def test_release_extracts_final_archives_to_directories_for_sboms() -> None:
+    jobs = _workflow()["jobs"]
+    linux_steps = jobs["linux"]["steps"]
+    macos_steps = jobs["macos"]["steps"]
+    linux_names = [step.get("name") for step in linux_steps]
+    macos_names = [step.get("name") for step in macos_steps]
+    linux_extract = next(
+        step for step in linux_steps if step.get("name") == "Extract final Linux artifact for SBOM"
+    )
+    linux_sbom = next(
+        step for step in linux_steps if step.get("name") == "Generate final Linux artifact SBOM"
+    )
+    macos_extract = next(
+        step for step in macos_steps if step.get("name") == "Extract final macOS artifact for SBOM"
+    )
+    macos_sbom = next(
+        step for step in macos_steps if step.get("name") == "Generate final macOS artifact SBOM"
+    )
+
+    assert linux_names.index("Package and verify final Linux archive") < linux_names.index(
+        "Extract final Linux artifact for SBOM"
+    ) < linux_names.index("Generate final Linux artifact SBOM")
+    assert "tar --no-same-owner --no-same-permissions" in linux_extract["run"]
+    assert '-xzf "artifacts/$BINARY_NAME-linux-x86_64.tar.gz"' in linux_extract["run"]
+    assert '-C "$RUNNER_TEMP/sbom-linux-x86_64"' in linux_extract["run"]
+    assert 'test -x "$RUNNER_TEMP/sbom-linux-x86_64/$BINARY_NAME"' in linux_extract["run"]
+    assert linux_sbom["with"]["path"] == "${{ runner.temp }}/sbom-linux-x86_64"
+    assert macos_names.index("Sign, notarize, and verify final macOS archive") < macos_names.index(
+        "Extract final macOS artifact for SBOM"
+    ) < macos_names.index("Generate final macOS artifact SBOM")
+    assert 'ditto -x -k "artifacts/$BINARY_NAME-macos-arm64.zip"' in macos_extract["run"]
+    assert '"$RUNNER_TEMP/sbom-macos-arm64"' in macos_extract["run"]
+    assert 'test -x "$RUNNER_TEMP/sbom-macos-arm64/$BINARY_NAME"' in macos_extract["run"]
+    assert macos_sbom["with"]["path"] == "${{ runner.temp }}/sbom-macos-arm64"
 
 
 def test_publish_commands_are_explicitly_repository_scoped() -> None:
