@@ -33,7 +33,11 @@ codesign -vvvv \
   -R="notarized" \
   --check-notarization \
   "$BINARY_PATH"
-lipo -verify_arch arm64 "$BINARY_PATH"
+ARCHITECTURES="$(lipo -archs "$BINARY_PATH")"
+[[ "$ARCHITECTURES" == "arm64" ]] || {
+  echo "expected an arm64-only binary, found: $ARCHITECTURES" >&2
+  exit 1
+}
 VERSION_OUTPUT="$("$BINARY_PATH" --version)"
 VERSION_LINE="${VERSION_OUTPUT%%$'\n'*}"
 [[ "$VERSION_LINE" == "$PUBLIC_BINARY_NAME $EXPECTED_VERSION" ]] || {
