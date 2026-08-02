@@ -141,8 +141,17 @@ def test_release_updates_formula_from_exact_verified_macos_asset() -> None:
     assert '"${FORMULA_SHA256}" =~ ^[0-9a-f]{64}$' in update
     assert 'git checkout -B "${branch}" refs/remotes/origin/main' in update
     assert "python3 scripts/update_formula.py" in update
-    for argument in ("--formula", "--repo", "--version", "--asset", "--sha256", "--binary"):
+    for argument in (
+        "--formula",
+        "--repo",
+        "--version",
+        "--asset",
+        "--sha256",
+        "--binary",
+        "--legacy-exceptions",
+    ):
         assert argument in update
+    assert '"config/legacy-dist-exceptions.json"' in update
 
 
 def test_release_pr_is_main_scoped_and_auto_merge_is_conditional() -> None:
@@ -168,6 +177,7 @@ def test_release_pr_is_main_scoped_and_auto_merge_is_conditional() -> None:
     assert commands.count("--base main") >= 2
     assert commands.count('--head "${branch}"') >= 2
     assert 'echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"' in commands
+    assert 'git add "Formula/${HOMEBREW_FORMULA}.rb" "config/legacy-dist-exceptions.json"' in commands
     assert merge_step["if"] == "steps.homebrew_pr.outputs.pr_number != ''"
     assert 'gh pr merge "${PR_NUMBER}"' in merge
     assert "--auto" in merge

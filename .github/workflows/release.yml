@@ -497,7 +497,8 @@ jobs:
             --version "${RELEASE_TAG}" \
             --asset "${FORMULA_ASSET}" \
             --sha256 "${FORMULA_SHA256}" \
-            --binary "${BINARY_NAME}"
+            --binary "${BINARY_NAME}" \
+            --legacy-exceptions "config/legacy-dist-exceptions.json"
           ruby -c "Formula/${HOMEBREW_FORMULA}.rb"
       - name: Create or update Homebrew tap pull request
         id: homebrew_pr
@@ -516,7 +517,7 @@ jobs:
           }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "Formula/${HOMEBREW_FORMULA}.rb"
+          git add "Formula/${HOMEBREW_FORMULA}.rb" "config/legacy-dist-exceptions.json"
           if git diff --cached --quiet; then
             echo "::notice::${HOMEBREW_FORMULA} already points at ${RELEASE_TAG}; no tap pull request is required."
             echo "pr_number=" >> "${GITHUB_OUTPUT}"
