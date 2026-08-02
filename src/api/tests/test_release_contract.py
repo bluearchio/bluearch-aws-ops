@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 QUALITY_WORKFLOW = ROOT / ".github" / "workflows" / "development-quality.yml"
+SCORECARD_WORKFLOW = ROOT / ".github" / "workflows" / "scorecard.yml"
 REAL_SUBPROCESS_RUN = subprocess.run
 
 
@@ -82,6 +83,18 @@ def test_quality_toolchain_and_audit_versions_are_pinned() -> None:
     assert "github.com/rhysd/actionlint/cmd/actionlint@v1.7.10" in actionlint["run"]
     assert 'python -m pip install -U pip "setuptools>=83"' in python_audit["run"]
     assert frontend_audit["run"] == "npm audit --prefix frontend --audit-level=high"
+
+
+def test_scorecard_write_permissions_are_scoped_to_its_job() -> None:
+    workflow = yaml.load(SCORECARD_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    assert all(permission != "write" for permission in workflow["permissions"].values())
+    assert workflow["jobs"]["scorecard"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "id-token": "write",
+        "security-events": "write",
+    }
 
 
 def test_build_and_cli_dependency_security_versions_are_pinned() -> None:
