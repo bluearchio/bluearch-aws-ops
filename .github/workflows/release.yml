@@ -379,6 +379,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RELEASE_TAG="${RELEASE_TAG:-}"
+          if [[ -z "${RELEASE_TAG}" ]]; then
+            echo "::error::RELEASE_TAG must be set by the workflow environment."
+            exit 1
+          fi
+          readonly RELEASE_TAG
           local_assets="${RUNNER_TEMP}/local-release-assets.tsv"
           remote_assets="${RUNNER_TEMP}/remote-release-assets.tsv"
           remote_assets_tmp="${RUNNER_TEMP}/remote-release-assets.tmp"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -14,6 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+QUALITY_WORKFLOW = ROOT / ".github" / "workflows" / "development-quality.yml"
 REAL_SUBPROCESS_RUN = subprocess.run
 
 
@@ -64,6 +66,53 @@ def test_normal_ci_runs_on_dev_and_main() -> None:
     workflow = yaml.load(CI_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
     assert set(workflow["on"]["push"]["branches"]) == {"dev", "main"}
+
+
+def test_quality_toolchain_and_audit_versions_are_pinned() -> None:
+    workflow = yaml.load(QUALITY_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    lint_steps = workflow["jobs"]["workflow-and-shell-lint"]["steps"]
+    setup_go = next(step for step in lint_steps if step.get("uses") == "actions/setup-go@v5")
+    actionlint = next(step for step in lint_steps if step.get("name") == "Run actionlint")
+    audit_steps = workflow["jobs"]["dependency-audit"]["steps"]
+    python_audit = next(step for step in audit_steps if step.get("name") == "Audit Python dependencies")
+    frontend_audit = next(step for step in audit_steps if step.get("name") == "Audit frontend dependencies")
+
+    assert setup_go["with"]["go-version"] == "1.24"
+    assert setup_go["with"]["cache"] == "false"
+    assert "github.com/rhysd/actionlint/cmd/actionlint@v1.7.10" in actionlint["run"]
+    assert 'python -m pip install -U pip "setuptools>=83"' in python_audit["run"]
+    assert frontend_audit["run"] == "npm audit --prefix frontend --audit-level=high"
+
+
+def test_build_and_cli_dependency_security_versions_are_pinned() -> None:
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    requirements = (ROOT / "src" / "api" / "requirements.txt").read_text(encoding="utf-8")
+
+    assert 'requires = ["setuptools>=83", "wheel"]' in project
+    assert re.search(r"^typer==0\.27\.0$", requirements, re.MULTILINE)
+    assert re.search(r"^click==8\.4\.2$", requirements, re.MULTILINE)
+    for filename in ("build-requirements.txt", "build-requirements-macos.txt"):
+        build_requirements = (ROOT / filename).read_text(encoding="utf-8")
+        assert re.search(r"^setuptools>=83$", build_requirements, re.MULTILINE)
+
+
+def test_frontend_lock_uses_a_non_vulnerable_postcss_release() -> None:
+    lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    version = lock["packages"]["node_modules/postcss"]["version"]
+
+    assert tuple(int(part) for part in version.split(".")) >= (8, 5, 18)
+
+
+def test_release_preserves_attestation_permission_and_validates_release_tag_env() -> None:
+    publish = _workflow()["jobs"]["publish"]
+    commands = next(
+        step["run"] for step in publish["steps"] if step.get("name") == "Publish or resume verified draft release"
+    )
+
+    assert publish["permissions"]["artifact-metadata"] == "write"
+    assert 'RELEASE_TAG="${RELEASE_TAG:-}"' in commands
+    assert 'if [[ -z "${RELEASE_TAG}" ]]' in commands
+    assert "readonly RELEASE_TAG" in commands
 
 
 def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
