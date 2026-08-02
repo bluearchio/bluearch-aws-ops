@@ -15,46 +15,92 @@ concurrency:
 
 env:
   BINARY_NAME: bluearch-aws-ops
-  HOMEBREW_FORMULA: bluearch-aws-ops
-  HOMEBREW_TAP_REPO: bluearchio/homebrew-tap
   RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
-  linux:
-    name: Linux release binary
-    runs-on: ubuntu-22.04
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref_name, 'v')
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Stamp release version
-        shell: python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify tag, committed version, and main SHA
+        shell: bash
         run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+          main_sha="$(git rev-parse origin/main)"
+          test "$tag_sha" = "$main_sha" || {
+            echo "::error::Release tag must point at origin/main"
+            exit 1
+          }
+          python3 - <<'PY'
           import os
-          from datetime import datetime, timezone
+          import re
+          import tomllib
           from pathlib import Path
 
-          release_tag = os.environ["RELEASE_TAG"]
-          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"invalid release tag: {tag}")
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
+          version_text = Path("src/api/aws/misc/version_controller.py").read_text(encoding="utf-8")
+          runtime_version = re.search(
+              r'^CURRENT_VERSION = os\.environ\.get\("BLUEARCH_AWS_OPS_VERSION", "([^"]+)"\)$',
+              version_text,
+              re.M,
+          ).group(1)
+          if project_version != runtime_version or tag != f"v{project_version}":
+              raise SystemExit(
+                  f"tag/version mismatch: tag={tag} project={project_version} runtime={runtime_version}"
+              )
+          PY
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r src/api/requirements.txt -e . pytest pytest-mock httpx2 PyYAML
+          npm --prefix frontend ci
+      - name: Run repository and release-contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src/api python -m pytest src/api/tests -q
+          PYTHONPATH=src/api python -m compileall -q src/api
+          npm --prefix frontend run build
+          bash -n \
+            scripts/build_nuitka_linux.sh \
+            scripts/build_nuitka_macos.sh \
+            scripts/install-linux.sh \
+            scripts/verify_linux_artifact.sh \
+            scripts/verify_macos_artifact.sh
 
-          version_file = Path("src/api/aws/misc/version_controller.py")
-          version_text = version_file.read_text()
-          version_text = version_text.replace(
-              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
-              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
-          )
-          version_file.write_text(version_text)
-
-          for template in Path("src/api/templates").glob("*.yaml"):
-              text = template.read_text()
-              text = text.replace("__TEMPLATE_VERSION__", release_tag)
-              text = text.replace("__CLI_VERSION__", release_tag)
-              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
-              template.write_text(text)
+  linux:
+    name: Verified Linux release binary
+    needs: verify
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref_name, 'v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -70,18 +116,28 @@ jobs:
           python -m pip install -U pip
           python -m pip install -r src/api/requirements.txt -e .
           python -m pip install -r build-requirements.txt
-      - name: Build Linux binary
-        run: bash scripts/build_nuitka_linux.sh
-      - name: Package Linux asset
+      - name: Prepare deterministic bundled templates
         shell: bash
         run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python scripts/prepare_release_templates.py
+      - name: Build Linux binary
+        run: bash scripts/build_nuitka_linux.sh
+      - name: Package and verify final Linux archive
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p artifacts
           tar -C dist -czf "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" "$BINARY_NAME"
           install -m 0755 scripts/install-linux.sh artifacts/install-linux.sh
-      - name: Generate Linux SBOM
+          bash scripts/verify_linux_artifact.sh \
+            "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" \
+            "$BINARY_NAME" \
+            "${RELEASE_TAG#v}"
+      - name: Generate final Linux artifact SBOM
         uses: anchore/sbom-action@v0.24.0
         with:
-          path: .
+          path: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.tar.gz
           format: cyclonedx-json
           output-file: artifacts/${{ env.BINARY_NAME }}-linux-x86_64.cyclonedx.json
           upload-artifact: false
@@ -93,40 +149,16 @@ jobs:
           if-no-files-found: error
 
   macos:
-    name: Signed macOS release binary
+    name: Verified signed macOS release binary
+    needs: verify
     runs-on: macos-14
     if: startsWith(github.ref_name, 'v')
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Stamp release version
-        shell: python
-        run: |
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          release_tag = os.environ["RELEASE_TAG"]
-          deployment_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-          version_file = Path("src/api/aws/misc/version_controller.py")
-          version_text = version_file.read_text()
-          version_text = version_text.replace(
-              'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "LOCAL")',
-              f'os.environ.get("BLUEARCH_AWS_OPS_VERSION", "{release_tag}")',
-          )
-          version_file.write_text(version_text)
-
-          for template in Path("src/api/templates").glob("*.yaml"):
-              text = template.read_text()
-              text = text.replace("__TEMPLATE_VERSION__", release_tag)
-              text = text.replace("__CLI_VERSION__", release_tag)
-              text = text.replace("__DEPLOYMENT_DATE__", deployment_date)
-              template.write_text(text)
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -140,20 +172,17 @@ jobs:
         shell: bash
         run: |
           python -m pip install -U pip
-          python -m pip install -r src/api/requirements.txt -e .
+          python -m pip install -r src/api/requirements.txt -e . pytest PyYAML
           python -m pip install -r build-requirements-macos.txt
+      - name: Verify unsigned-artifact rejection contract
+        run: PYTHONPATH=src/api python -m pytest src/api/tests/test_release_contract.py -k unsigned -q
+      - name: Prepare deterministic bundled templates
+        shell: bash
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python scripts/prepare_release_templates.py
       - name: Build unsigned macOS binary
         run: bash scripts/build_nuitka_macos.sh
-      - name: Prepare macOS artifacts directory
-        run: mkdir -p artifacts
-      - name: Generate macOS SBOM
-        uses: anchore/sbom-action@v0.24.0
-        with:
-          path: .
-          format: cyclonedx-json
-          output-file: artifacts/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
-          upload-artifact: false
-          upload-release-assets: false
       - name: Import Apple signing assets
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || secrets.MACOS_CERTIFICATE }}
@@ -165,6 +194,7 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         shell: bash
         run: |
+          set -euo pipefail
           for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing required signing secret: $name"
@@ -181,10 +211,10 @@ jobs:
 
           temp = Path(os.environ["RUNNER_TEMP"])
           (temp / "developer_id.p12").write_bytes(base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"]))
-          api_key_id = os.environ.get("APPLE_API_KEY_ID")
-          api_key = os.environ.get("APPLE_API_KEY_P8_BASE64")
-          if api_key_id and api_key:
-              (temp / f"AuthKey_{api_key_id}.p8").write_bytes(base64.b64decode(api_key))
+          key_id = os.environ.get("APPLE_API_KEY_ID")
+          key = os.environ.get("APPLE_API_KEY_P8_BASE64")
+          if key_id and key:
+              (temp / f"AuthKey_{key_id}.p8").write_bytes(base64.b64decode(key))
           PY
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
@@ -196,16 +226,12 @@ jobs:
           if [[ -z "$identity" ]]; then
             identity="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
           fi
-          if [[ -z "$identity" ]]; then
-            echo "::error::Developer ID Application certificate not found in imported keychain."
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-            exit 1
-          fi
+          [[ -n "$identity" ]] || { echo "::error::Developer ID Application identity not found"; exit 1; }
           {
             echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
             echo "MACOS_CODESIGN_IDENTITY=$identity"
           } >> "$GITHUB_ENV"
-      - name: Codesign and notarize macOS asset
+      - name: Sign, notarize, and verify final macOS archive
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -214,33 +240,33 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
+          set -euo pipefail
           trap 'security delete-keychain "$KEYCHAIN_PATH" || true' EXIT
-          if [[ -z "${MACOS_CODESIGN_IDENTITY:-}" ]]; then
-            echo "::error::Missing required signing secret: MACOS_CODESIGN_IDENTITY"
-            exit 1
-          fi
-          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "dist/$BINARY_NAME"
-          codesign --verify --strict --verbose=2 "dist/$BINARY_NAME"
+          [[ -n "${MACOS_CODESIGN_IDENTITY:-}" ]] || { echo "::error::Missing signing identity"; exit 1; }
           mkdir -p artifacts
+          codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_CODESIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "dist/$BINARY_NAME"
+          codesign --verify --deep --strict --verbose=2 "dist/$BINARY_NAME"
           ditto -c -k --keepParent "dist/$BINARY_NAME" "artifacts/$BINARY_NAME-macos-arm64.zip"
           if [[ -n "${APPLE_API_KEY_ID:-}" && -n "${APPLE_API_ISSUER_ID:-}" && -f "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" ]]; then
-            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
-              --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" \
-              --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER_ID" \
-              --wait
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" --key "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait
           elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_ID_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
-            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_ID_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              --wait
+            xcrun notarytool submit "artifacts/$BINARY_NAME-macos-arm64.zip" --apple-id "$APPLE_ID" --password "$APPLE_ID_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           else
-            echo "::error::Missing notarization credentials. Configure APPLE_API_KEY_* secrets or APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID."
+            echo "::error::Missing notarization credentials"
             exit 1
           fi
-          xcrun stapler staple "artifacts/$BINARY_NAME-macos-arm64.zip" || \
-            echo "::notice::Notarization succeeded; zip stapling is not required for this CLI artifact."
+          bash scripts/verify_macos_artifact.sh \
+            "artifacts/$BINARY_NAME-macos-arm64.zip" \
+            "$BINARY_NAME" \
+            "${RELEASE_TAG#v}"
+      - name: Generate final macOS artifact SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: artifacts/${{ env.BINARY_NAME }}-macos-arm64.zip
+          format: cyclonedx-json
+          output-file: artifacts/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
+          upload-artifact: false
+          upload-release-assets: false
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos-arm64
@@ -248,9 +274,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish signed release
+    name: Publish verified release
+    needs: [verify, linux, macos]
     runs-on: ubuntu-24.04
-    needs: [linux, macos]
     if: startsWith(github.ref_name, 'v')
     permissions:
       contents: write
@@ -258,22 +284,17 @@ jobs:
       artifact-metadata: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
-      - name: Generate checksums
+      - name: Generate final checksums
         shell: bash
         run: |
+          set -euo pipefail
           cd release-assets
-          find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -printf '%P\0' | \
-            sort -z | xargs -0 sha256sum > SHA256SUMS
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
       - name: Generate artifact provenance attestations
         if: github.event.repository.private == false
         uses: actions/attest@v4
@@ -281,74 +302,18 @@ jobs:
           subject-path: release-assets/*
       - name: Note skipped artifact attestations
         if: github.event.repository.private
-        run: echo "::notice::Artifact attestations are skipped while this repository is private. They will run for public release tags."
-      - name: Validate Homebrew tap token
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
-        shell: bash
-        run: |
-          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
-            echo "::error::Missing HOMEBREW_TAP_TOKEN_2. Create a fine-grained token scoped to ${HOMEBREW_TAP_REPO} contents and pull requests."
-            exit 1
-          fi
-      - name: Publish draft release with all assets
+        run: echo "::notice::Artifact attestations are skipped while this repository is private."
+      - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists. Create a new tag instead of mutating release assets."
+            echo "::error::Release $RELEASE_TAG already exists; create a new tag"
             exit 1
           fi
           gh release create "$RELEASE_TAG" release-assets/* --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
           gh release edit "$RELEASE_TAG" --draft=false
-      - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.HOMEBREW_TAP_REPO }}
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
-          path: homebrew-tap
-          persist-credentials: false
-      - name: Update Homebrew formula
-        shell: bash
-        run: |
-          set -euo pipefail
-          asset="${BINARY_NAME}-macos-arm64.zip"
-          sha256="$(sha256sum "release-assets/${asset}" | awk '{print $1}')"
-          python3 homebrew-tap/scripts/update_formula.py \
-            --formula "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --version "${RELEASE_TAG}" \
-            --asset "${asset}" \
-            --sha256 "${sha256}" \
-            --binary "${BINARY_NAME}"
-          ruby -c "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb"
-      - name: Open Homebrew tap pull request
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd homebrew-tap
-          branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "${branch}"
-          git add "Formula/${HOMEBREW_FORMULA}.rb"
-          if git diff --cached --quiet; then
-            echo "No Homebrew formula changes."
-            exit 0
-          fi
-          git commit -m "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}"
-          gh auth setup-git -h github.com
-          git push --force-with-lease origin "${branch}"
-          if gh pr list --repo "${HOMEBREW_TAP_REPO}" --head "${branch}" --json number --jq '.[0].number // empty' | grep -q .; then
-            echo "Homebrew tap pull request already exists."
-          else
-            gh pr create \
-              --repo "${HOMEBREW_TAP_REPO}" \
-              --base main \
-              --head "${branch}" \
-              --title "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}" \
-              --body "Updates ${HOMEBREW_FORMULA} to ${RELEASE_TAG} from ${GITHUB_REPOSITORY}."
-          fi
+      - name: Record formula promotion checkpoint
+        run: echo "::notice::Promote the verified dist.bluearch.io artifact to the Homebrew tap in the separate post-release checkpoint."

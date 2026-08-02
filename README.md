@@ -104,7 +104,9 @@ gh attestation verify bluearch-aws-ops-linux-x86_64.tar.gz --repo bluearchio/blu
 
 For macOS, verify `bluearch-aws-ops-macos-arm64.zip` with `gh attestation verify`.
 
-Release workflows also open a pull request against `bluearchio/homebrew-tap` to update `bluearch-aws-ops`. Configure `HOMEBREW_TAP_TOKEN_2` before cutting a public tag.
+The release workflow does not mutate the Homebrew tap. After the verified artifact is promoted to the approved
+`dist.bluearch.io` release path, update `bluearchio/homebrew-tap` through the separate reviewed formula-promotion
+checkpoint so the live distribution URL is preserved.
 
 ## Security And Privacy Defaults
 

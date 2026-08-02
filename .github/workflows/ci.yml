@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [dev, main]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install -U pip
-          python -m pip install -e . pytest pytest-mock httpx2
+          python -m pip install -e . pytest pytest-mock httpx2 PyYAML
       - name: Test
         run: PYTHONPATH=src/api python -m pytest src/api/tests
       - name: Compile
