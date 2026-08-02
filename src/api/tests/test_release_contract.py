@@ -36,6 +36,7 @@ def test_release_graph_verifies_tag_and_main_before_builds() -> None:
     assert jobs["linux"]["needs"] == "verify"
     assert jobs["macos"]["needs"] == "verify"
     assert set(jobs["publish"]["needs"]) == {"verify", "linux", "macos"}
+    assert jobs["homebrew"]["needs"] == "publish"
     verify_commands = _run_text(jobs["verify"])
     assert "origin/main" in verify_commands
     assert "dev:refs/remotes/origin/dev" in verify_commands
@@ -86,9 +87,12 @@ def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
 
 
 def test_publish_commands_are_explicitly_repository_scoped() -> None:
-    publish_commands = _run_text(_workflow()["jobs"]["publish"])
+    publish = _workflow()["jobs"]["publish"]
+    publish_commands = next(
+        step["run"] for step in publish["steps"] if step.get("name") == "Publish or resume verified draft release"
+    )
 
-    assert publish_commands.count('--repo "$GITHUB_REPOSITORY"') == 3
+    assert publish_commands.count('--repo "$GITHUB_REPOSITORY"') == 4
     assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
     assert 'gh release create "$RELEASE_TAG"' in publish_commands
     assert 'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
@@ -103,7 +107,7 @@ def test_release_validates_cross_repo_token_before_publication() -> None:
 
     assert workflow["env"]["HOMEBREW_TAP_REPO"] == "bluearchio/homebrew-tap"
     assert token_step["env"]["GH_TOKEN"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
-    assert names.index("Validate Homebrew tap token") < names.index("Publish immutable release assets")
+    assert names.index("Validate Homebrew tap token") < names.index("Publish or resume verified draft release")
     assert '[[ -z "${GH_TOKEN:-}" ]]' in gate
     assert 'gh api "repos/${HOMEBREW_TAP_REPO}"' in gate
     assert ".permissions.push // false" in gate
@@ -113,47 +117,112 @@ def test_release_validates_cross_repo_token_before_publication() -> None:
 
 
 def test_release_updates_formula_from_exact_verified_macos_asset() -> None:
-    publish = _workflow()["jobs"]["publish"]
-    checkout = next(step for step in publish["steps"] if step.get("name") == "Checkout Homebrew tap main")
+    jobs = _workflow()["jobs"]
+    publish = jobs["publish"]
+    homebrew = jobs["homebrew"]
+    checkout = next(step for step in homebrew["steps"] if step.get("name") == "Checkout Homebrew tap main")
+    checksums = next(step for step in publish["steps"] if step.get("name") == "Generate final checksums")
     update = next(
-        step for step in publish["steps"] if step.get("name") == "Update Homebrew formula from verified asset"
+        step for step in homebrew["steps"] if step.get("name") == "Update Homebrew formula from verified asset"
     )["run"]
 
+    assert publish["outputs"]["formula_asset"] == "${{ steps.final_checksums.outputs.formula_asset }}"
+    assert publish["outputs"]["formula_sha256"] == "${{ steps.final_checksums.outputs.formula_sha256 }}"
+    assert checksums["id"] == "final_checksums"
+    assert 'formula_asset="${BINARY_NAME}-macos-arm64.zip"' in checksums["run"]
+    assert 'formula_sha256="$(sha256sum "${formula_asset}"' in checksums["run"]
+    assert homebrew["env"]["FORMULA_ASSET"] == "${{ needs.publish.outputs.formula_asset }}"
+    assert homebrew["env"]["FORMULA_SHA256"] == "${{ needs.publish.outputs.formula_sha256 }}"
     assert checkout["with"]["repository"] == "${{ env.HOMEBREW_TAP_REPO }}"
     assert checkout["with"]["ref"] == "main"
     assert checkout["with"]["token"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
     assert checkout["with"]["persist-credentials"] == "false"
-    assert 'asset="${BINARY_NAME}-macos-arm64.zip"' in update
-    assert "release-assets/SHA256SUMS" in update
-    assert '"${#checksum_rows[@]}" -ne 1' in update
-    assert "sha256sum -c -" in update
-    assert "homebrew-tap/scripts/update_formula.py" in update
+    assert '"${FORMULA_ASSET}" == "${BINARY_NAME}-macos-arm64.zip"' in update
+    assert '"${FORMULA_SHA256}" =~ ^[0-9a-f]{64}$' in update
+    assert 'git checkout -B "${branch}" refs/remotes/origin/main' in update
+    assert "python3 scripts/update_formula.py" in update
     for argument in ("--formula", "--repo", "--version", "--asset", "--sha256", "--binary"):
         assert argument in update
 
 
 def test_release_pr_is_main_scoped_and_auto_merge_is_conditional() -> None:
-    publish = _workflow()["jobs"]["publish"]
-    prepare = next(step for step in publish["steps"] if step.get("name") == "Prepare Homebrew release branch")["run"]
+    homebrew = _workflow()["jobs"]["homebrew"]
+    update = next(
+        step for step in homebrew["steps"] if step.get("name") == "Update Homebrew formula from verified asset"
+    )["run"]
     pr_step = next(
-        step for step in publish["steps"] if step.get("name") == "Open or update Homebrew tap pull request"
+        step for step in homebrew["steps"] if step.get("name") == "Create or update Homebrew tap pull request"
+    )
+    merge_step = next(
+        step
+        for step in homebrew["steps"]
+        if step.get("name") == "Request Homebrew tap auto-merge after required checks"
     )
     commands = pr_step["run"]
+    merge = merge_step["run"]
 
     assert pr_step["env"]["GH_TOKEN"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
-    assert 'branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"' in prepare
-    assert 'git checkout -B "${branch}" origin/main' in prepare
+    assert 'branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"' in update
     assert 'git push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:refs/heads/${branch}"' in commands
-    assert commands.count('--repo "${HOMEBREW_TAP_REPO}"') >= 4
+    assert commands.count('--repo "${HOMEBREW_TAP_REPO}"') >= 3
     assert commands.count("--base main") >= 2
     assert commands.count('--head "${branch}"') >= 2
-    assert 'if [[ -n "${pr_number}" ]]' in commands
-    assert 'gh pr merge "${pr_number}"' in commands
-    assert "--auto" in commands
-    assert "--squash" in commands
-    assert "--delete-branch" in commands
-    assert "--admin" not in commands
+    assert 'echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"' in commands
+    assert merge_step["if"] == "steps.homebrew_pr.outputs.pr_number != ''"
+    assert 'gh pr merge "${PR_NUMBER}"' in merge
+    assert "--auto" in merge
+    assert "--squash" in merge
+    assert "--delete-branch" in merge
+    assert "--admin" not in merge
     assert "git push origin main" not in commands
+
+
+def test_homebrew_job_waits_for_actual_merge_and_retries_transient_reads() -> None:
+    step = next(
+        step
+        for step in _workflow()["jobs"]["homebrew"]["steps"]
+        if step.get("name") == "Wait for Homebrew formula merge"
+    )
+    commands = step["run"]
+
+    assert step["if"] == "steps.homebrew_pr.outputs.pr_number != ''"
+    assert step["timeout-minutes"] == "125"
+    assert 'gh pr view "${PR_NUMBER}" --repo "${HOMEBREW_TAP_REPO}" --json state --jq' in commands
+    assert "MERGED)" in commands
+    assert "CLOSED)" in commands
+    assert "deadline=$((SECONDS + 7200))" in commands
+    assert "while (( SECONDS < deadline ))" in commands
+    assert "view_failures=$((view_failures + 1))" in commands
+    assert "sleep 30" in commands
+    assert "Timed out after 2 hours" in commands
+
+
+def test_publish_resumes_only_drafts_and_verifies_exact_remote_digests() -> None:
+    jobs = _workflow()["jobs"]
+    publish = jobs["publish"]
+    commands = next(
+        step["run"] for step in publish["steps"] if step.get("name") == "Publish or resume verified draft release"
+    )
+
+    assert not any(step.get("name") == "Checkout Homebrew tap main" for step in publish["steps"])
+    assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft' in commands
+    assert '"${release_is_draft}" != "true"' in commands
+    assert "already public and must never be mutated" in commands
+    assert "Resuming existing draft release" in commands
+    assert 'gh release create "$RELEASE_TAG" \\' in commands
+    assert 'gh release create "$RELEASE_TAG" release-assets' not in commands
+    assert 'gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber' in commands
+    assert "(.digest // \"\")" in commands
+    assert "sha256:%s" in commands
+    assert 'cmp -s "${local_assets}" "${remote_assets}"' in commands
+    assert commands.index("already public and must never be mutated") < commands.index("gh release upload")
+    assert commands.index("gh release upload") < commands.index("(.digest //")
+    assert commands.index("assets_verified") < commands.index('gh release edit "$RELEASE_TAG"')
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme.replace("**", "").split())
+    assert "Re-run failed jobs" in normalized_readme
+    assert "Re-run all jobs" in normalized_readme
+    assert "full workflow rerun intentionally rejects" in normalized_readme
 
 
 def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
