@@ -65,7 +65,7 @@ def test_normal_ci_runs_on_dev_and_main() -> None:
     assert set(workflow["on"]["push"]["branches"]) == {"dev", "main"}
 
 
-def test_release_verifies_final_artifacts_without_inline_stamping_or_tap_mutation() -> None:
+def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
     jobs = _workflow()["jobs"]
     workflow_text = WORKFLOW.read_text(encoding="utf-8")
 
@@ -75,9 +75,6 @@ def test_release_verifies_final_artifacts_without_inline_stamping_or_tap_mutatio
     assert "scripts/prepare_release_templates.py" in _run_text(jobs["macos"])
     assert "SHA256SUMS" in _run_text(jobs["publish"])
     assert "Stamp release version" not in workflow_text
-    assert "homebrew-tap" not in workflow_text
-    assert "update_formula.py" not in workflow_text
-    assert "dist.bluearch.io" in _run_text(jobs["publish"])
     macos_commands = _run_text(jobs["macos"])
     assert "--keepParent" not in macos_commands
     assert "--norsrc --noextattr --noqtn --noacl" in macos_commands
@@ -95,6 +92,68 @@ def test_publish_commands_are_explicitly_repository_scoped() -> None:
     assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
     assert 'gh release create "$RELEASE_TAG"' in publish_commands
     assert 'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
+
+
+def test_release_validates_cross_repo_token_before_publication() -> None:
+    workflow = _workflow()
+    publish = workflow["jobs"]["publish"]
+    names = [step.get("name") for step in publish["steps"]]
+    token_step = next(step for step in publish["steps"] if step.get("name") == "Validate Homebrew tap token")
+    gate = token_step["run"]
+
+    assert workflow["env"]["HOMEBREW_TAP_REPO"] == "bluearchio/homebrew-tap"
+    assert token_step["env"]["GH_TOKEN"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
+    assert names.index("Validate Homebrew tap token") < names.index("Publish immutable release assets")
+    assert '[[ -z "${GH_TOKEN:-}" ]]' in gate
+    assert 'gh api "repos/${HOMEBREW_TAP_REPO}"' in gate
+    assert ".permissions.push // false" in gate
+    assert ".allow_auto_merge // false" in gate
+    assert 'gh pr list --repo "${HOMEBREW_TAP_REPO}"' in gate
+    assert "|| true" not in gate
+
+
+def test_release_updates_formula_from_exact_verified_macos_asset() -> None:
+    publish = _workflow()["jobs"]["publish"]
+    checkout = next(step for step in publish["steps"] if step.get("name") == "Checkout Homebrew tap main")
+    update = next(
+        step for step in publish["steps"] if step.get("name") == "Update Homebrew formula from verified asset"
+    )["run"]
+
+    assert checkout["with"]["repository"] == "${{ env.HOMEBREW_TAP_REPO }}"
+    assert checkout["with"]["ref"] == "main"
+    assert checkout["with"]["token"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
+    assert checkout["with"]["persist-credentials"] == "false"
+    assert 'asset="${BINARY_NAME}-macos-arm64.zip"' in update
+    assert "release-assets/SHA256SUMS" in update
+    assert '"${#checksum_rows[@]}" -ne 1' in update
+    assert "sha256sum -c -" in update
+    assert "homebrew-tap/scripts/update_formula.py" in update
+    for argument in ("--formula", "--repo", "--version", "--asset", "--sha256", "--binary"):
+        assert argument in update
+
+
+def test_release_pr_is_main_scoped_and_auto_merge_is_conditional() -> None:
+    publish = _workflow()["jobs"]["publish"]
+    prepare = next(step for step in publish["steps"] if step.get("name") == "Prepare Homebrew release branch")["run"]
+    pr_step = next(
+        step for step in publish["steps"] if step.get("name") == "Open or update Homebrew tap pull request"
+    )
+    commands = pr_step["run"]
+
+    assert pr_step["env"]["GH_TOKEN"] == "${{ secrets.HOMEBREW_TAP_TOKEN_2 }}"
+    assert 'branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"' in prepare
+    assert 'git checkout -B "${branch}" origin/main' in prepare
+    assert 'git push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:refs/heads/${branch}"' in commands
+    assert commands.count('--repo "${HOMEBREW_TAP_REPO}"') >= 4
+    assert commands.count("--base main") >= 2
+    assert commands.count('--head "${branch}"') >= 2
+    assert 'if [[ -n "${pr_number}" ]]' in commands
+    assert 'gh pr merge "${pr_number}"' in commands
+    assert "--auto" in commands
+    assert "--squash" in commands
+    assert "--delete-branch" in commands
+    assert "--admin" not in commands
+    assert "git push origin main" not in commands
 
 
 def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
@@ -197,6 +256,15 @@ def test_linux_installer_is_fail_closed_and_has_exact_layout_checks() -> None:
     assert "exactly one row" in source
     assert "exactly one top-level" in source
     assert "find " not in source
+
+
+def test_linux_installer_defaults_to_github_releases_and_keeps_mirror_opt_in() -> None:
+    source = (ROOT / "scripts" / "install-linux.sh").read_text(encoding="utf-8")
+
+    assert 'https://github.com/%s/releases/latest/download' in source
+    assert 'https://github.com/%s/releases/download/%s' in source
+    assert 'local dist_base="${BLUEARCH_DIST_BASE_URL:-}"' in source
+    assert 'BLUEARCH_DIST_BASE_URL:-https://dist.bluearch.io' not in source
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS signature tools are required")

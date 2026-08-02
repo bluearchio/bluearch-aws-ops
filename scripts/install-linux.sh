@@ -46,8 +46,23 @@ release_base_url() {
   local repo="$1"
   local version="$2"
   local project="${repo##*/}"
-  local dist_base="${BLUEARCH_DIST_BASE_URL:-https://dist.bluearch.io}"
-  printf '%s/releases/%s/%s' "${dist_base%/}" "$project" "$version"
+  local dist_base="${BLUEARCH_DIST_BASE_URL:-}"
+  local tag
+
+  if [[ -n "$dist_base" ]]; then
+    printf '%s/releases/%s/%s' "${dist_base%/}" "$project" "$version"
+    return
+  fi
+  if [[ "$version" == "latest" ]]; then
+    printf 'https://github.com/%s/releases/latest/download' "$repo"
+    return
+  fi
+  if [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    tag="v${version#v}"
+    printf 'https://github.com/%s/releases/download/%s' "$repo" "$tag"
+    return
+  fi
+  fail "Release version must be 'latest' or an exact X.Y.Z/vX.Y.Z version"
 }
 
 download_file() {

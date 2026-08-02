@@ -15,6 +15,8 @@ concurrency:
 
 env:
   BINARY_NAME: bluearch-aws-ops
+  HOMEBREW_FORMULA: bluearch-aws-ops
+  HOMEBREW_TAP_REPO: bluearchio/homebrew-tap
   RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
@@ -139,7 +141,8 @@ jobs:
       - name: Prepare deterministic bundled templates
         shell: bash
         run: |
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
           python scripts/prepare_release_templates.py
       - name: Build Linux binary
         run: bash scripts/build_nuitka_linux.sh
@@ -199,7 +202,8 @@ jobs:
       - name: Prepare deterministic bundled templates
         shell: bash
         run: |
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
           python scripts/prepare_release_templates.py
       - name: Build unsigned macOS binary
         run: bash scripts/build_nuitka_macos.sh
@@ -318,7 +322,11 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
-          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
+          checksum_file="$(mktemp "${RUNNER_TEMP}/SHA256SUMS.XXXXXX")"
+          trap 'rm -f "${checksum_file}"' EXIT
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum > "${checksum_file}"
+          mv "${checksum_file}" SHA256SUMS
+          trap - EXIT
       - name: Generate artifact provenance attestations
         if: github.event.repository.private == false
         uses: actions/attest@v4
@@ -327,6 +335,31 @@ jobs:
       - name: Note skipped artifact attestations
         if: github.event.repository.private
         run: echo "::notice::Artifact attestations are skipped while this repository is private."
+      - name: Validate Homebrew tap token
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Missing HOMEBREW_TAP_TOKEN_2. Configure a fine-grained token for ${HOMEBREW_TAP_REPO} with Contents and Pull requests read/write access."
+            exit 1
+          fi
+          repo_info="$(gh api "repos/${HOMEBREW_TAP_REPO}" --jq '[.full_name, (.permissions.push // false), (.allow_auto_merge // false)] | @tsv')"
+          IFS=$'\t' read -r actual_repo can_push auto_merge <<< "${repo_info}"
+          if [[ "${actual_repo}" != "${HOMEBREW_TAP_REPO}" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 resolved unexpected repository ${actual_repo}."
+            exit 1
+          fi
+          if [[ "${can_push}" != "true" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 cannot push release branches to ${HOMEBREW_TAP_REPO}."
+            exit 1
+          fi
+          if [[ "${auto_merge}" != "true" ]]; then
+            echo "::error::${HOMEBREW_TAP_REPO} must enable auto-merge before product releases are published."
+            exit 1
+          fi
+          gh pr list --repo "${HOMEBREW_TAP_REPO}" --state open --limit 1 >/dev/null
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -339,5 +372,94 @@ jobs:
           fi
           gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
-      - name: Record formula promotion checkpoint
-        run: echo "::notice::Promote the verified dist.bluearch.io artifact to the Homebrew tap in the separate post-release checkpoint."
+      - name: Checkout Homebrew tap main
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+          path: homebrew-tap
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare Homebrew release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
+          git checkout -B "${branch}" origin/main
+      - name: Update Homebrew formula from verified asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="${BINARY_NAME}-macos-arm64.zip"
+          mapfile -t checksum_rows < <(awk -v asset="${asset}" '$2 == asset { print }' release-assets/SHA256SUMS)
+          if [[ "${#checksum_rows[@]}" -ne 1 ]]; then
+            echo "::error::SHA256SUMS must contain exactly one row for ${asset}."
+            exit 1
+          fi
+          read -r sha256 checksum_asset extra <<< "${checksum_rows[0]}"
+          if [[ -n "${extra:-}" || "${checksum_asset}" != "${asset}" || ! "${sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid SHA256SUMS row for ${asset}."
+            exit 1
+          fi
+          printf '%s  %s\n' "${sha256}" "${asset}" | (cd release-assets && sha256sum -c -)
+          python3 homebrew-tap/scripts/update_formula.py \
+            --formula "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --version "${RELEASE_TAG}" \
+            --asset "${asset}" \
+            --sha256 "${sha256}" \
+            --binary "${BINARY_NAME}"
+          ruby -c "homebrew-tap/Formula/${HOMEBREW_FORMULA}.rb"
+      - name: Open or update Homebrew tap pull request
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          branch="release/${HOMEBREW_FORMULA}-${RELEASE_TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${HOMEBREW_FORMULA}.rb"
+          if git diff --cached --quiet; then
+            echo "::notice::${HOMEBREW_FORMULA} already points at ${RELEASE_TAG}; no tap pull request is required."
+            exit 0
+          fi
+          git commit -m "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}"
+          gh auth setup-git --hostname github.com
+          remote_sha="$(git ls-remote --heads origin "refs/heads/${branch}" | awk '{print $1}')"
+          git push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:refs/heads/${branch}"
+          pr_number="$(gh pr list \
+            --repo "${HOMEBREW_TAP_REPO}" \
+            --state open \
+            --base main \
+            --head "${branch}" \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [[ -z "${pr_number}" ]]; then
+            gh pr create \
+              --repo "${HOMEBREW_TAP_REPO}" \
+              --base main \
+              --head "${branch}" \
+              --title "chore: update ${HOMEBREW_FORMULA} to ${RELEASE_TAG}" \
+              --body "Updates ${HOMEBREW_FORMULA} to ${RELEASE_TAG} from ${GITHUB_REPOSITORY} using its verified macOS release asset."
+            pr_number="$(gh pr list \
+              --repo "${HOMEBREW_TAP_REPO}" \
+              --state open \
+              --base main \
+              --head "${branch}" \
+              --json number \
+              --jq '.[0].number // empty')"
+          fi
+          if [[ -n "${pr_number}" ]]; then
+            gh pr merge "${pr_number}" \
+              --repo "${HOMEBREW_TAP_REPO}" \
+              --auto \
+              --squash \
+              --delete-branch
+          else
+            echo "::error::Unable to create or locate the Homebrew tap pull request."
+            exit 1
+          fi

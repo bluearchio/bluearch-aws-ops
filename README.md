@@ -46,7 +46,7 @@ brew install bluearchio/tap/bluearch-aws-ops
 Linux:
 
 ```bash
-curl -fsSL https://dist.bluearch.io/install/bluearch-aws-ops.sh | bash
+curl -fsSL https://github.com/bluearchio/bluearch-aws-ops/releases/latest/download/install-linux.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 bluearch-aws-core start --daemon
 bluearch-aws-ops scan
@@ -54,6 +54,11 @@ bluearch-aws-ops recommendations
 ```
 
 The Linux installer installs `bluearch-aws-core` automatically if it is missing.
+It downloads both verified archives and their `SHA256SUMS` directly from GitHub
+Releases by default. Set `BLUEARCH_VERSION=vX.Y.Z` and
+`BLUEARCH_CORE_VERSION=vX.Y.Z` for immutable releases.
+`BLUEARCH_DIST_BASE_URL` is supported only when explicitly set to an approved
+mirror base URL.
 
 From source:
 
@@ -117,9 +122,15 @@ gh attestation verify bluearch-aws-ops-linux-x86_64.tar.gz --repo bluearchio/blu
 
 For macOS, verify `bluearch-aws-ops-macos-arm64.zip` with `gh attestation verify`.
 
-The release workflow does not mutate the Homebrew tap. After the verified artifact is promoted to the approved
-`dist.bluearch.io` release path, update `bluearchio/homebrew-tap` through the separate reviewed formula-promotion
-checkpoint so the live distribution URL is preserved.
+After publishing the verified GitHub Release, the workflow checks out
+`bluearchio/homebrew-tap` at `main`, uses its `scripts/update_formula.py` to
+generate the immutable GitHub Release URL and exact macOS archive SHA-256, and
+opens or updates `release/bluearch-aws-ops-vX.Y.Z`. It requests an automatic
+squash merge, so GitHub merges the formula only after the tap's required pull
+request checks pass. Before creating a release tag, the tap must have auto-merge
+enabled and `main` protected by its required CI checks. Configure
+`HOMEBREW_TAP_TOKEN_2` as a fine-grained token for that tap with Contents and
+Pull requests read/write access.
 
 ## Security And Privacy Defaults
 
