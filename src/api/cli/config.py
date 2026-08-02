@@ -1,16 +1,330 @@
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
 from typer import Option
+
+
+CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
+OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
+PUBLIC_FORMULAS = frozenset({CORE_FORMULA, OPS_FORMULA})
+CORE_FORMULA_NAME = "bluearch-aws-core"
+PUBLIC_CORE_EXECUTABLE = "bluearch-aws-core"
+PUBLIC_CORE_VERSION_RE = re.compile(
+    rf"{re.escape(PUBLIC_CORE_EXECUTABLE)} ([0-9]+\.[0-9]+\.[0-9]+)"
+)
+SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
+PUBLIC_OPS_VERSION_RE = re.compile(
+    rf"{re.escape(PUBLIC_OPS_EXECUTABLE)} [0-9]+\.[0-9]+\.[0-9]+"
+)
+
+
+def _trust_homebrew_formula(formula: str, *, brew: Path | None = None) -> bool:
+    """Trust one exact public formula before any Homebrew mutation."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None or formula not in PUBLIC_FORMULAS:
+        return False
+    result = subprocess.run(
+        [str(brew), "trust", "--formula", formula],
+        capture_output=False,
+        text=True,
+        timeout=60,
+    )
+    return result.returncode == 0
+
+
+def _run_trusted_homebrew_formula(
+    operation: str,
+    formula: str,
+    *,
+    timeout: int = 300,
+    brew: Path | None = None,
+) -> bool:
+    """Run one allowed install/upgrade only after its exact formula is trusted."""
+    if operation not in {"install", "upgrade"} or formula not in PUBLIC_FORMULAS:
+        raise ValueError("Unsupported Homebrew formula mutation")
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    formulas_to_trust = (CORE_FORMULA, OPS_FORMULA) if formula == OPS_FORMULA else (formula,)
+    for required_formula in formulas_to_trust:
+        if not _trust_homebrew_formula(required_formula, brew=brew):
+            return False
+    result = subprocess.run(
+        [str(brew), operation, formula],
+        capture_output=False,
+        text=True,
+        timeout=timeout,
+    )
+    return result.returncode == 0
+
+
+def _trust_required_homebrew_formulas(*, brew: Path | None = None) -> bool:
+    """Trust Core and then Ops before loading any Ops tap metadata."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    for formula in (CORE_FORMULA, OPS_FORMULA):
+        if not _trust_homebrew_formula(formula, brew=brew):
+            return False
+    return True
+
+
+def _run_trusted_homebrew_outdated(formula: str = OPS_FORMULA):
+    """Query the exact Ops formula only after Core and Ops trust succeeds."""
+    if formula != OPS_FORMULA:
+        raise ValueError("Unsupported Homebrew formula query")
+    brew = _canonical_homebrew_executable()
+    if brew is None:
+        raise RuntimeError("Could not resolve the Homebrew executable")
+    if not _trust_required_homebrew_formulas(brew=brew):
+        raise RuntimeError("Could not trust the required Core and Ops formulas")
+    result = subprocess.run(
+        [str(brew), "outdated", formula],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Homebrew outdated check failed for {formula}{suffix}")
+    return result
+
+
+def _canonical_homebrew_executable() -> Path | None:
+    """Return one absolute, canonical Homebrew executable from PATH."""
+    candidate = shutil.which("brew")
+    if not candidate or not Path(candidate).is_absolute():
+        return None
+    try:
+        resolved = Path(candidate).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if resolved.name != "brew" or not resolved.is_file() or not os.access(resolved, os.X_OK):
+        return None
+    return resolved
+
+
+def _single_absolute_directory(result: subprocess.CompletedProcess) -> Path | None:
+    """Parse one existing absolute directory from a successful command."""
+    if result.returncode != 0:
+        return None
+    lines = (result.stdout or "").splitlines()
+    if len(lines) != 1:
+        return None
+    candidate = Path(lines[0])
+    if not candidate.is_absolute():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return resolved if resolved.is_dir() else None
+
+
+def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
+    """Resolve Core only from the exact trusted formula's active Cellar prefix."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return None
+
+    verification_env = os.environ.copy()
+    verification_env.pop("BLUEARCH_CORE_BINARY", None)
+    verification_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    try:
+        prefix_result = subprocess.run(
+            [str(brew), "--prefix", CORE_FORMULA],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=verification_env,
+        )
+        cellar_result = subprocess.run(
+            [str(brew), "--cellar"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=verification_env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    prefix = _single_absolute_directory(prefix_result)
+    cellar = _single_absolute_directory(cellar_result)
+    if prefix is None or cellar is None:
+        return None
+    try:
+        prefix_parts = prefix.relative_to(cellar).parts
+    except ValueError:
+        return None
+    if len(prefix_parts) != 2 or prefix_parts[0] != CORE_FORMULA_NAME:
+        return None
+
+    candidate = prefix / "bin" / PUBLIC_CORE_EXECUTABLE
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(prefix)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if (
+        resolved.name != PUBLIC_CORE_EXECUTABLE
+        or not resolved.is_file()
+        or not os.access(resolved, os.X_OK)
+    ):
+        return None
+    return resolved
+
+
+def _version_tuple(version: str) -> tuple[int, int, int] | None:
+    """Parse the release's strict three-part numeric version contract."""
+    if not SEMVER_RE.fullmatch(str(version or "")):
+        return None
+    return tuple(int(part) for part in str(version).split("."))
+
+
+def _installed_public_core_satisfies(
+    required_core_version: str, *, brew: Path | None = None
+) -> bool:
+    """Verify the exact trusted-formula Core binary and enforce its minimum."""
+    required = _version_tuple(required_core_version)
+    if required is None:
+        return False
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    binary = _formula_owned_core_binary(brew=brew)
+    if binary is None:
+        return False
+
+    verification_env = os.environ.copy()
+    verification_env.pop("BLUEARCH_CORE_BINARY", None)
+    verification_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    try:
+        result = subprocess.run(
+            [str(binary), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=verification_env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    lines = (result.stdout or "").splitlines()
+    if result.returncode != 0 or len(lines) != 1:
+        return False
+    match = PUBLIC_CORE_VERSION_RE.fullmatch(lines[0])
+    installed = _version_tuple(match.group(1)) if match else None
+    return installed is not None and installed >= required
+
+
+def _update_homebrew_core(required_core_version: str, *, brew: Path | None = None) -> bool:
+    """Install or upgrade Core, then verify its exact public runtime identity."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    installed = subprocess.run(
+        [str(brew), "list", "--versions", CORE_FORMULA_NAME],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    operation = "upgrade" if installed.returncode == 0 and installed.stdout.strip() else "install"
+    succeeded = _run_trusted_homebrew_formula(operation, CORE_FORMULA, brew=brew)
+    if not succeeded and operation == "upgrade":
+        succeeded = _run_trusted_homebrew_formula("install", CORE_FORMULA, brew=brew)
+    return succeeded and _installed_public_core_satisfies(required_core_version, brew=brew)
+
+
+def _perform_homebrew_update(required_core_version: str) -> bool:
+    """Update Homebrew and Core safely before upgrading the public Ops formula."""
+    brew = _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    if not _trust_required_homebrew_formulas(brew=brew):
+        return False
+    update_result = subprocess.run(
+        [str(brew), "update"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if update_result.returncode != 0:
+        return False
+    if not _update_homebrew_core(required_core_version, brew=brew):
+        return False
+    return _run_trusted_homebrew_formula("upgrade", OPS_FORMULA, brew=brew)
+
+
+def _resolve_public_homebrew_binary(path: Path) -> Path | None:
+    """Resolve a Homebrew link without executing legacy or renamed targets."""
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    try:
+        cellar_index = resolved.parts.index("Cellar")
+        formula_name = resolved.parts[cellar_index + 1]
+    except (ValueError, IndexError):
+        return None
+    if (
+        resolved.name != PUBLIC_OPS_EXECUTABLE
+        or formula_name != PUBLIC_OPS_EXECUTABLE
+        or not resolved.is_file()
+        or not os.access(resolved, os.X_OK)
+    ):
+        return None
+    return resolved
+
+
+def detect_homebrew_installation(locations: dict[str, Path] | None = None) -> dict:
+    """Return info only for an exact, executable public Ops Homebrew target."""
+    locations = locations or {
+        "homebrew_arm": Path("/opt/homebrew/bin/bluearch-aws-ops"),
+        "homebrew_intel": Path("/usr/local/bin/bluearch-aws-ops"),
+    }
+    for install_type, path in locations.items():
+        resolved = _resolve_public_homebrew_binary(path)
+        if resolved is None:
+            continue
+
+        version = "unknown"
+        try:
+            result = subprocess.run(
+                [str(resolved), "--version"], capture_output=True, text=True, timeout=10
+            )
+            lines = result.stdout.splitlines()
+            if result.returncode == 0 and lines and PUBLIC_OPS_VERSION_RE.fullmatch(lines[0]):
+                version = lines[0]
+        except Exception:
+            pass
+
+        legacy_binary = Path.home() / ".local" / "bin" / "bluearch"
+        return {
+            "installed": True,
+            "binary_path": str(path),
+            "resolved_binary_path": str(resolved),
+            "version": version,
+            "install_type": install_type,
+            "conflict": legacy_binary.exists(),
+            "curl_binary_path": str(legacy_binary) if legacy_binary.exists() else None,
+        }
+    return {"installed": False}
 
 def delete():
     """
     [deprecated] Delete the CloudFormation stack.
 
     This command is deprecated. BlueArch CLI no longer requires a CloudFormation
-    deployment. Use 'bluearch scan' for local scanning instead.
+    deployment. Use 'bluearch-aws-ops scan' for local scanning instead.
     """
     from utils.display_utils import print_warning
     print_warning(
         "The 'delete' command is deprecated. BlueArch CLI no longer requires "
-        "a CloudFormation deployment. All scanning runs locally via 'bluearch scan'."
+        "a CloudFormation deployment. All scanning runs locally via 'bluearch-aws-ops scan'."
     )
     return
     # Legacy CloudFormation logic preserved below for reference
@@ -61,7 +375,7 @@ def delete():
 
 def show_accounts_and_regions():
     """
-    Displays the collected Account IDs and Regions from bluearch-core.
+    Displays the collected Account IDs and Regions from bluearch-aws-core.
     """
     from rich.console import Console
     from rich.table import Table
@@ -71,7 +385,7 @@ def show_accounts_and_regions():
     accounts = DatabaseManager().get_accounts_and_regions()
 
     if not accounts:
-        console.print("[yellow]No accounts found. Run [cyan]bluearch scan[/cyan] first.[/yellow]")
+        console.print("[yellow]No accounts found. Run [cyan]bluearch-aws-ops scan[/cyan] first.[/yellow]")
         return
 
     table = Table(title="Accounts & Regions", show_header=True, header_style="bold cyan")
@@ -105,14 +419,12 @@ def update(
       - Source install: reinstall from the local checkout
 
     [green]Examples:[/green]
-      bluearch update              # Update to latest version
-      bluearch update --check      # Check for updates without installing
-      bluearch update --force      # Update without confirmation
-      bluearch update --dev        # Development channel (curl only)
-      bluearch update --yes        # Unattended (skip if already up to date)
+      bluearch-aws-ops update              # Update to latest version
+      bluearch-aws-ops update --check      # Check for updates without installing
+      bluearch-aws-ops update --force      # Update without confirmation
+      bluearch-aws-ops update --dev        # Development channel (curl only)
+      bluearch-aws-ops update --yes        # Unattended (skip if already up to date)
     """
-    import subprocess
-    from pathlib import Path
     from rich.console import Console
     from rich.prompt import Confirm
     from rich.markup import escape
@@ -121,7 +433,7 @@ def update(
     from aws.misc.error_handlings import error_handler
 
     console = Console()
-    PROD_INSTALL_URL = "brew upgrade bluearchio/tap/bluearch-aws-ops"
+    PROD_INSTALL_URL = f"brew install {OPS_FORMULA}"
     DEV_INSTALL_URL = "pipx install -e ../bluearch-aws-ops --force"
     CORE_REQUIREMENT_KEYS = (
         "minimum_core_version",
@@ -130,78 +442,34 @@ def update(
         "required_core_version",
     )
 
-    def detect_homebrew_installation() -> dict:
-        """Return info about a Homebrew-installed bluearch binary, if any."""
-        locations = {
-            "homebrew_arm": Path("/opt/homebrew/bin/bluearch"),
-            "homebrew_intel": Path("/usr/local/bin/bluearch"),
-        }
-        for install_type, path in locations.items():
-            if not path.exists():
-                continue
-            if install_type == "homebrew_intel":
-                try:
-                    if "Cellar" not in str(path.resolve()):
-                        continue
-                except Exception:
-                    continue
-
-            version = "unknown"
-            try:
-                result = subprocess.run(
-                    [str(path), "--version"], capture_output=True, text=True, timeout=10
-                )
-                if result.returncode == 0:
-                    for line in result.stdout.split("\n"):
-                        if "BlueArch" in line:
-                            version = line.strip()
-                            break
-            except Exception:
-                pass
-
-            curl_binary = Path.home() / ".local" / "bin" / "bluearch"
-            return {
-                "installed": True,
-                "binary_path": str(path),
-                "version": version,
-                "install_type": install_type,
-                "conflict": curl_binary.exists(),
-                "curl_binary_path": str(curl_binary) if curl_binary.exists() else None,
-            }
-        return {"installed": False}
-
-    def perform_homebrew_core_update(required_core_version: str) -> bool:
-        console.print(f"[dim]Ensuring bluearch-core >= {required_core_version}...[/dim]")
-        installed = subprocess.run(
-            ["brew", "list", "--versions", "bluearch-aws-core"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        command = ["brew", "upgrade", "bluearchio/tap/bluearch-aws-core"] if installed.stdout.strip() else ["brew", "install", "bluearchio/tap/bluearch-aws-core"]
-        result = subprocess.run(command, capture_output=False, text=True, timeout=300)
-        if result.returncode != 0 and command[1] == "upgrade":
-            result = subprocess.run(["brew", "install", "bluearchio/tap/bluearch-aws-core"], capture_output=False, text=True, timeout=300)
-        return result.returncode == 0
-
     def perform_homebrew_update(required_core_version: str) -> bool:
         console.print("\n[blue]Updating via Homebrew...[/blue]")
         console.print("[dim]Updating Homebrew tap...[/dim]")
-        subprocess.run(["brew", "update"], capture_output=True, text=True, timeout=120)
-        if not perform_homebrew_core_update(required_core_version):
-            console.print("[red]bluearch-core update failed. BlueArch CLI update was not started.[/red]")
-            return False
-        console.print("[dim]Upgrading bluearch-aws-ops...[/dim]")
-        result = subprocess.run(
-            ["brew", "upgrade", "bluearchio/tap/bluearch-aws-ops"], capture_output=False, text=True, timeout=300
-        )
-        return result.returncode == 0
+        succeeded = _perform_homebrew_update(required_core_version)
+        if not succeeded:
+            console.print("[red]bluearch-aws-core update failed. BlueArch CLI update was not started.[/red]")
+        return succeeded
 
-    def perform_core_install(required_core_version: str, development_channel: bool) -> bool:
+    def perform_core_install(
+        required_core_version: str,
+        development_channel: bool,
+        *,
+        brew: Path | None = None,
+    ) -> bool:
         from utils.core_client import core_install_url
 
         install_url = core_install_url(development_channel)
-        console.print(f"\n[blue]Ensuring bluearch-core >= {required_core_version}...[/blue]")
+        console.print(f"\n[blue]Ensuring bluearch-aws-core >= {required_core_version}...[/blue]")
+        if not development_channel:
+            brew = brew or _canonical_homebrew_executable()
+            if brew is None:
+                return False
+            succeeded = _run_trusted_homebrew_formula(
+                "install", CORE_FORMULA, brew=brew
+            )
+            return succeeded and _installed_public_core_satisfies(
+                required_core_version, brew=brew
+            )
         cmd = install_url
         console.print(f"[dim]Executing: {cmd}[/dim]")
         result = subprocess.run(cmd.split(), capture_output=False, text=True)
@@ -298,17 +566,17 @@ def update(
                 if check:
                     console.print("\n[blue]Checking for Homebrew updates...[/blue]")
                     try:
-                        result = subprocess.run(
-                            ["brew", "outdated", "bluearch"],
-                            capture_output=True, text=True, timeout=30,
-                        )
+                        result = _run_trusted_homebrew_outdated()
                         if result.stdout.strip():
                             console.print("[yellow]Update available via Homebrew[/yellow]")
-                            console.print("\nTo update: [cyan]brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/cyan]")
+                            console.print(f"\n[cyan]brew trust --formula {CORE_FORMULA}[/cyan]")
+                            console.print(f"[cyan]brew trust --formula {OPS_FORMULA}[/cyan]")
+                            console.print(f"[cyan]brew upgrade {CORE_FORMULA} {OPS_FORMULA}[/cyan]")
                         else:
                             console.print("[green]Already on latest Homebrew version![/green]")
                     except Exception as e:
-                        console.print(f"[dim]Could not check: {escape(str(e))}[/dim]")
+                        console.print(f"[red]Could not check Homebrew updates: {escape(str(e))}[/red]")
+                        raise typer.Exit(1)
                     return
 
                 console.print("\n[blue]Homebrew is the recommended update method for your installation.[/blue]")
@@ -318,14 +586,16 @@ def update(
                         "(brew upgrade/install bluearch-aws-core, then brew upgrade bluearch-aws-ops)?"
                     )
                     if not Confirm.ask(prompt, default=True):
-                        console.print("\n[dim]Update cancelled. To update manually: brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/dim]")
+                        console.print(f"\n[dim]Update cancelled. First run: brew trust --formula {CORE_FORMULA}[/dim]")
+                        console.print(f"[dim]Then run: brew trust --formula {OPS_FORMULA}[/dim]")
+                        console.print(f"[dim]Then run: brew upgrade {CORE_FORMULA} {OPS_FORMULA}[/dim]")
                         return
 
                 if perform_homebrew_update(required_core_version):
                     console.print("\n[green]Update completed successfully![/green]")
-                    console.print("\nRun [cyan]bluearch --version[/cyan] to verify the new version.")
+                    console.print("\nRun [cyan]bluearch-aws-ops --version[/cyan] to verify the new version.")
                 else:
-                    console.print("[red]Homebrew update failed. Try manually: brew upgrade bluearchio/tap/bluearch-aws-core bluearchio/tap/bluearch-aws-ops[/red]")
+                    console.print(f"[red]Homebrew update failed. Trust {CORE_FORMULA} and {OPS_FORMULA} individually, then retry.[/red]")
                     raise typer.Exit(1)
                 return
 
@@ -359,13 +629,13 @@ def update(
 
             if check:
                 if updates:
-                    console.print("\nTo update: [cyan]bluearch update[/cyan]")
+                    console.print("\nTo update: [cyan]bluearch-aws-ops update[/cyan]")
                 return
 
             if not force and not yes:
                 console.print("\n[yellow]This will update BlueArch CLI to the latest version.[/yellow]")
                 console.print("[dim]This will:[/dim]")
-                console.print(f"[dim]  - Install or update bluearch-core to >= {required_core_version}[/dim]")
+                console.print(f"[dim]  - Install or update bluearch-aws-core to >= {required_core_version}[/dim]")
                 console.print("[dim]  - Download and install the latest binary[/dim]")
                 console.print("[dim]  - Preserve your database (automatic backup)[/dim]")
                 console.print("[dim]  - Run any necessary database migrations[/dim]")
@@ -374,23 +644,35 @@ def update(
                     console.print("Update cancelled.")
                     return
 
-            if not perform_core_install(required_core_version, development):
+            brew = None if development else _canonical_homebrew_executable()
+            if not development and brew is None:
+                console.print("[red]Could not resolve the Homebrew executable.[/red]")
+                raise typer.Exit(1)
+            if not perform_core_install(
+                required_core_version, development, brew=brew
+            ):
                 console.print("[red]BlueArch Core update failed. BlueArch CLI update was not started.[/red]")
                 raise typer.Exit(1)
 
             console.print(f"\n[blue]Downloading and installing latest {channel} version...[/blue]")
             cmd = install_url
             console.print(f"[dim]Executing: {cmd}[/dim]")
-            result = subprocess.run(cmd.split(), capture_output=False, text=True)
+            if development:
+                result = subprocess.run(cmd.split(), capture_output=False, text=True)
+                succeeded = result.returncode == 0
+            else:
+                succeeded = _run_trusted_homebrew_formula(
+                    "install", OPS_FORMULA, brew=brew
+                )
 
-            if result.returncode == 0:
+            if succeeded:
                 console.print("\n[green]Update completed successfully![/green]")
                 console.print("\n[dim]Database migrations are handled automatically during installation.[/dim]")
                 console.print(
                     "\nYou may need to restart your terminal or run "
                     "[cyan]source ~/.bashrc[/cyan] (or [cyan]source ~/.zshrc[/cyan])"
                 )
-                console.print("\nRun [cyan]bluearch --version[/cyan] to verify the new version.")
+                console.print("\nRun [cyan]bluearch-aws-ops --version[/cyan] to verify the new version.")
             else:
                 console.print("[red]Update failed. Please check the output above for details.[/red]")
                 console.print("[red]You can also try running the installation manually:[/red]")
@@ -407,6 +689,7 @@ def update(
                 error_handler.handle_error(e)
             except Exception:
                 console.print(f"[red]Update failed: {escape(str(e))}[/red]")
+            raise typer.Exit(1)
 
     execute_update()
 
@@ -415,14 +698,14 @@ def deploy(add_accounts: bool = Option(False, "--add-accounts", help="Add more a
     [deprecated] Start the CloudFormation configuration workflow.
 
     This command is deprecated. BlueArch CLI no longer requires a CloudFormation
-    deployment. Use 'bluearch scan' for local scanning instead.
-    If you need cross-account setup, use 'bluearch setup multi-account'.
+    deployment. Use 'bluearch-aws-ops scan' for local scanning instead.
+    If you need cross-account setup, use 'bluearch-aws-ops setup multi-account'.
     """
     from utils.display_utils import print_warning
     print_warning(
         "The 'deploy' command is deprecated. BlueArch CLI no longer requires "
-        "a CloudFormation deployment. Use 'bluearch scan' for local scanning, "
-        "or 'bluearch setup multi-account' for cross-account configuration."
+        "a CloudFormation deployment. Use 'bluearch-aws-ops scan' for local scanning, "
+        "or 'bluearch-aws-ops setup multi-account' for cross-account configuration."
     )
     return
     # Legacy CloudFormation logic preserved below for reference

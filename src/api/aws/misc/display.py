@@ -33,7 +33,7 @@ def display_manual_instructions_workflow(): #TODO: Transform into a class so we 
     console.print("\n1. For each child account you want to collect recommendations for:")
     console.print("   - Log into the AWS child account")
     console.print(f"   - Create an assume-role trust back to source account {ACCOUNT_ID}")
-    console.print("   - Use `bluearch setup assume-role` or the bundled CloudFormation template")
+    console.print("   - Use `bluearch-aws-ops setup assume-role` or the bundled CloudFormation template")
     console.print("   - Enter account ID into the terminal")
     console.print("   - Repeat the process for each child account you want to collect recommendations for")
     console.print("\nType 'done' when finished.")

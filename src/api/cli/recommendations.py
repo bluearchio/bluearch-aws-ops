@@ -28,7 +28,7 @@ def show_recommendations(
     recommendation_type: str = Option(None, "--recommendation-type", "-t", help="The type of recommendation to filter by.")
 ):
     """
-    Retrieves recommendations from bluearch-core.
+    Retrieves recommendations from bluearch-aws-core.
 
     [yellow]You can filter the recommendations by:[/yellow]
     [green]- Account ID[/green]
@@ -36,7 +36,7 @@ def show_recommendations(
     [green]- Recommendation Type[/green]
 
     [yellow]Example:[/yellow]
-    [green]bluearch show-recommendations --account-id 123456789012 -r us-east-1 -t unattached_ec2_volumes[/green]
+    [green]bluearch-aws-ops recommendations --account-id 123456789012 -r us-east-1 -t unattached_ec2_volumes[/green]
     """
     from rich.console import Console
     from rich.table import Table
@@ -44,7 +44,7 @@ def show_recommendations(
     console = Console()
     recs = _list_recommendations(account_id=account_id, region=region, recommendation_type=recommendation_type)
     if not recs:
-        console.print("[yellow]No recommendations found. Run [cyan]bluearch scan[/cyan] first.[/yellow]")
+        console.print("[yellow]No recommendations found. Run [cyan]bluearch-aws-ops scan[/cyan] first.[/yellow]")
         return
 
     table = Table(title=f"Recommendations ({len(recs)})", show_header=True, header_style="bold cyan")
@@ -85,7 +85,7 @@ def show_recommendation_types():
     types = Counter(rec.get("recommendation_type") or "unknown" for rec in recs)
 
     if not types:
-        console.print("[yellow]No recommendation types found. Run [cyan]bluearch scan[/cyan] first.[/yellow]")
+        console.print("[yellow]No recommendation types found. Run [cyan]bluearch-aws-ops scan[/cyan] first.[/yellow]")
         return
 
     table = Table(title="Recommendation Types", show_header=True, header_style="bold cyan")
@@ -106,8 +106,8 @@ def scheduler(
 
 
     [yellow]Example:[/yellow]
-    [green]bluearch scheduler -g[/green]
-    [green]bluearch scheduler -d[/green]
+    [green]bluearch-aws-ops scheduler -g[/green]
+    [green]bluearch-aws-ops scheduler -d[/green]
 
     More information:
     [blue]https://docs.bluearch.io/bluearch-cli#/?id=scheduler[/blue]
@@ -125,7 +125,7 @@ def scheduler(
             eb_client = EventBridge()
             if get:
                 if eb_client.GetScheduleStatus() == "DISABLED":
-                    console.print("[yellow]The scheduler is currently disabled. Run 'bluearch scheduler' to enable it.[/yellow]")
+                    console.print("[yellow]The scheduler is currently disabled. Run 'bluearch-aws-ops scheduler' to enable it.[/yellow]")
                     return
                 
                 scheduler_expression = eb_client.GetScheduleExpression()
@@ -134,7 +134,7 @@ def scheduler(
             
             if disable:
                 if eb_client.GetScheduleStatus() == "DISABLED":
-                    console.print("[yellow]The scheduler is already disabled. Run 'bluearch scheduler' to enable it.[/yellow]")
+                    console.print("[yellow]The scheduler is already disabled. Run 'bluearch-aws-ops scheduler' to enable it.[/yellow]")
                     return
 
                 if Prompt.ask("[blue]Do you want to disable the populate scheduler?[/blue]", choices=["yes", "no"], default="no") == "yes":

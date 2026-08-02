@@ -132,7 +132,7 @@ def handle_database_errors(func):
             # Check for SQLAlchemy/SQLite errors by name to avoid hard import
             if "OperationalError" in error_type or "SQLAlchemy" in error_type:
                 print_error(f"Database error: {e}")
-                print_info("Try: [cyan]bluearch setup database --force[/cyan]")
+                print_info("Try: [cyan]bluearch-aws-ops setup wizard[/cyan]")
                 log.debug(f"Database error: {e}")
                 _exit_safely()
                 return

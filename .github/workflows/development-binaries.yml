@@ -1,13 +1,14 @@
 name: Development Binaries
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: development-binaries-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   BINARY_NAME: bluearch-aws-ops

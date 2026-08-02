@@ -78,6 +78,7 @@ python -m nuitka \
   --include-package=routes \
   --include-package=utils \
   --include-package=web \
+  --include-package=psutil \
   --include-package=shellingham \
   --include-package-data=rich \
   --include-package-data=pydantic \

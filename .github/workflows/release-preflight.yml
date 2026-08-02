@@ -1,0 +1,87 @@
+name: Release Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_TAP_REPO: bluearchio/homebrew-tap
+
+jobs:
+  validate:
+    name: Validate release credentials and tap access
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Validate signing, notarization, and tap credentials
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 || secrets.APPLE_CERTIFICATE_BASE64 || secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MACOS_CERTIFICATE_PWD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD || secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN_2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            MACOS_CERTIFICATE_P12_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            APPLE_ID \
+            APPLE_ID_PASSWORD \
+            APPLE_TEAM_ID \
+            GH_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required release credential: $name"
+              exit 1
+            fi
+          done
+
+          certificate_file="$(mktemp "${RUNNER_TEMP}/release-certificate.XXXXXX.p12")"
+          trap 'rm -f "$certificate_file"' EXIT
+          CERTIFICATE_FILE="$certificate_file" python3 - <<'PY'
+          import base64
+          import binascii
+          import os
+          from pathlib import Path
+
+          encoded = "".join(os.environ["MACOS_CERTIFICATE_P12_BASE64"].split())
+          try:
+              decoded = base64.b64decode(encoded, validate=True)
+          except (binascii.Error, ValueError):
+              raise SystemExit("MACOS_CERTIFICATE_P12_BASE64 is not valid base64")
+          if not decoded:
+              raise SystemExit("MACOS_CERTIFICATE_P12_BASE64 decodes to an empty value")
+          Path(os.environ["CERTIFICATE_FILE"]).write_bytes(decoded)
+          PY
+          if ! openssl pkcs12 -legacy -in "$certificate_file" \
+            -passin env:MACOS_CERTIFICATE_PASSWORD -noout >/dev/null 2>&1; then
+            echo "::error::The signing certificate or its password is invalid"
+            exit 1
+          fi
+          rm -f "$certificate_file"
+          trap - EXIT
+
+          tap_info="$(gh api "repos/${HOMEBREW_TAP_REPO}" \
+            --jq '[.full_name, (.permissions.push // false), (.allow_auto_merge // false)] | @tsv')"
+          IFS=$'\t' read -r actual_tap can_push auto_merge <<< "$tap_info"
+          if [[ "$actual_tap" != "$HOMEBREW_TAP_REPO" ]]; then
+            echo "::error::Homebrew tap token resolved an unexpected repository"
+            exit 1
+          fi
+          if [[ "$can_push" != true ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN_2 requires push access to the Homebrew tap"
+            exit 1
+          fi
+          if [[ "$auto_merge" != true ]]; then
+            echo "::error::The Homebrew tap must enable auto-merge"
+            exit 1
+          fi
+          gh pr list --repo "$HOMEBREW_TAP_REPO" --state open --limit 1 >/dev/null
+          echo "Release preflight passed."

@@ -112,7 +112,7 @@ def _show_main_help():
     console.print("  bluearch-aws-ops alarm --config-targets  Manage notification targets (email/Slack)")
     console.print()
     console.print("[bold cyan]Log Analysis:[/bold cyan]")
-    console.print("  bluearch-aws-ops logs scan             Scan CloudWatch Logs for error patterns")
+    console.print("  bluearch-aws-ops scan                  Includes CloudWatch Logs error patterns")
     console.print("  bluearch-aws-ops logs errors           View log analysis findings")
     console.print("  bluearch-aws-ops logs analyze ID       AI root-cause analysis on a finding")
     console.print()

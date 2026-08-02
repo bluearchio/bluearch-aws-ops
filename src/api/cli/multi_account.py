@@ -32,8 +32,8 @@ def accounts_add(
     Add an AWS account for cross-account scanning.
 
     [green]Examples:[/green]
-      bluearch accounts add -a 123456789012 -r BlueArchCLIRole
-      bluearch accounts add -a 123456789012 -r BlueArchCLIRole -e my-external-id --alias production
+      bluearch-aws-ops accounts add -a 123456789012 -r BlueArchCLIRole
+      bluearch-aws-ops accounts add -a 123456789012 -r BlueArchCLIRole -e my-external-id --alias production
     """
     # Validate account ID format
     if not account_id.isdigit() or len(account_id) != 12:
@@ -45,7 +45,7 @@ def accounts_add(
     existing = _find_assume_role_config(account_id)
     if existing:
         console.print(f"[yellow]Account {account_id} is already configured (role: {existing.get('role_arn')}).[/yellow]")
-        console.print("[dim]Use 'bluearch accounts remove' first to reconfigure.[/dim]")
+        console.print("[dim]Use 'bluearch-aws-ops accounts remove' first to reconfigure.[/dim]")
         raise typer.Exit(0)
 
     _create_assume_role_config(
@@ -68,7 +68,7 @@ def accounts_add(
     if alias:
         console.print(f"  Alias:       [cyan]{alias}[/cyan]")
     console.print()
-    console.print("[dim]Run [cyan]bluearch accounts test -a {0}[/cyan] to verify role assumption.[/dim]".format(account_id))
+    console.print("[dim]Run [cyan]bluearch-aws-ops accounts test -a {0}[/cyan] to verify role assumption.[/dim]".format(account_id))
 
 
 @accounts_app.command(name="list")
@@ -78,7 +78,7 @@ def accounts_list():
 
     if not configs:
         console.print("[dim]No cross-account roles configured.[/dim]")
-        console.print("[dim]Use [cyan]bluearch accounts add[/cyan] to add one.[/dim]")
+        console.print("[dim]Use [cyan]bluearch-aws-ops accounts add[/cyan] to add one.[/dim]")
         return
 
     table = Table(
@@ -115,7 +115,7 @@ def accounts_remove(
     Remove a cross-account configuration.
 
     [green]Examples:[/green]
-      bluearch accounts remove -a 123456789012
+      bluearch-aws-ops accounts remove -a 123456789012
     """
     config = _find_assume_role_config(account_id)
 
@@ -137,13 +137,13 @@ def accounts_test(
     Test role assumption for a configured account.
 
     [green]Examples:[/green]
-      bluearch accounts test -a 123456789012
+      bluearch-aws-ops accounts test -a 123456789012
     """
     config = _find_assume_role_config(account_id)
 
     if not config:
         console.print(f"[yellow]No configuration found for account {account_id}.[/yellow]")
-        console.print("[dim]Use [cyan]bluearch accounts add[/cyan] to configure it first.[/dim]")
+        console.print("[dim]Use [cyan]bluearch-aws-ops accounts add[/cyan] to configure it first.[/dim]")
         raise typer.Exit(1)
 
     role_arn = config["role_arn"]
@@ -281,7 +281,7 @@ def _parse_csv_option(value: Optional[str]) -> list[str] | None:
 
 def _print_core_stackset_status(status_payload: dict) -> None:
     if not status_payload.get("exists"):
-        console.print(f"[yellow]No StackSet deployed. Run [cyan]bluearch accounts deploy[/cyan] to create it.[/yellow]")
+        console.print(f"[yellow]No StackSet deployed. Run [cyan]bluearch-aws-ops accounts deploy[/cyan] to create it.[/yellow]")
         return
 
     console.print(f"  StackSet: [cyan]{status_payload.get('stackset_name') or STACKSET_NAME}[/cyan]")

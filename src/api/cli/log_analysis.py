@@ -1,6 +1,6 @@
-"""`bluearch logs` — view log-analysis findings + AI root-cause analysis.
+"""`bluearch-aws-ops logs` — view log-analysis findings + AI root-cause analysis.
 
-CloudWatch log scanning is part of the unified `bluearch scan` (runs as a
+CloudWatch log scanning is part of the unified `bluearch-aws-ops scan` (runs as a
 collector alongside ec2/rds/etc.), so this command group only exposes
 read/analyze actions — not a separate scan trigger.
 """
@@ -19,10 +19,10 @@ from utils.error_handlers import handle_all_errors
 log_analysis_app = typer.Typer(
     help=(
         "[bold]Log Analysis[/bold] -- view CloudWatch log error findings + AI root-cause analysis.\n\n"
-        "[dim]Log scanning runs as part of [cyan]bluearch scan[/cyan].[/dim]\n\n"
+        "[dim]Log scanning runs as part of [cyan]bluearch-aws-ops scan[/cyan].[/dim]\n\n"
         "[green]Examples:[/green]\n"
-        "  bluearch logs errors                   View the latest scan's findings\n"
-        "  bluearch logs analyze FINDING_ID       AI root-cause analysis on a finding\n"
+        "  bluearch-aws-ops logs errors                   View the latest scan's findings\n"
+        "  bluearch-aws-ops logs analyze FINDING_ID       AI root-cause analysis on a finding\n"
     ),
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -49,7 +49,7 @@ def errors_cmd(
     if scan_id is None:
         latest = _latest_log_scan()
         if latest is None:
-            print_warning("No log scans recorded yet. Run [cyan]bluearch scan[/cyan] first.")
+            print_warning("No log scans recorded yet. Run [cyan]bluearch-aws-ops scan[/cyan] first.")
             raise typer.Exit(0)
         scan_id = latest["id"]
 
@@ -208,7 +208,7 @@ def _resolve_log_finding_id(value: str) -> Optional[str]:
 @log_analysis_app.command(name="analyze")
 @handle_all_errors
 def analyze_cmd(
-    finding_id: str = typer.Argument(..., help="Finding ID (from `bluearch logs errors`)"),
+    finding_id: str = typer.Argument(..., help="Finding ID (from `bluearch-aws-ops logs errors`)"),
     model: str = typer.Option("sonnet", "--model", "-m", help="Bedrock model alias: haiku / sonnet / opus"),
     region: Optional[str] = typer.Option(None, "--region", "-r", help="AWS region for Bedrock + Logs"),
 ):

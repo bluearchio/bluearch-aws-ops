@@ -38,7 +38,7 @@ router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 async def list_scans(
     limit: int = Query(20, ge=1, le=200),
 ):
-    """List recent log scans (populated by the unified `bluearch scan`)."""
+    """List recent log scans (populated by `bluearch-aws-ops scan`)."""
     rows = list_storage_payloads(
         "bluearch",
         "log-scans",

@@ -10,7 +10,7 @@ MENU_ITEMS = {
     "2": ("View Recommendations", "List findings from last scan", "recommendations"),
     "4": ("Alarms", "Configure CloudWatch alarms", "alarm"),
     "5": ("Setup", "Guided setup wizard", "setup"),
-    "6": ("Web Dashboard", "Start the web dashboard", "web-start"),
+    "6": ("Web Dashboard", "Show the Core-managed start command", "web-help"),
     "0": ("Exit", "", "exit"),
 }
 
@@ -64,6 +64,6 @@ def _dispatch(action: str):
         from utils.onboarding import run_onboarding
         run_onboarding()
 
-    elif action == "web-start":
-        from cli.web import start
-        start(port=8095, host="127.0.0.1", daemon=False, log_level="info", no_browser=False)
+    elif action == "web-help":
+        console.print("[cyan]Start the dashboards with:[/cyan] bluearch-aws-core start --daemon")
+        console.print("[cyan]Then open:[/cyan] http://localhost:8095")
