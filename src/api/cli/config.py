@@ -689,6 +689,7 @@ def update(
                 error_handler.handle_error(e)
             except Exception:
                 console.print(f"[red]Update failed: {escape(str(e))}[/red]")
+            raise typer.Exit(1)
 
     execute_update()
 
