@@ -27,7 +27,7 @@ def test_version_identifies_public_ops_and_trusts_before_outdated():
     )
 
     assert result.exit_code == 0
-    assert result.output.splitlines()[0] == "bluearch-aws-ops 0.13.4"
+    assert result.output.splitlines()[0] == "bluearch-aws-ops 0.13.5"
     core_trust = "brew trust --formula bluearchio/tap/bluearch-aws-core"
     ops_trust = "brew trust --formula bluearchio/tap/bluearch-aws-ops"
     outdated = "brew outdated bluearchio/tap/bluearch-aws-ops"

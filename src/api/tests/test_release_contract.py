@@ -274,6 +274,23 @@ def test_release_verifies_final_artifacts_without_inline_stamping() -> None:
     assert '"$PUBLIC_BINARY_NAME $EXPECTED_VERSION"' in macos_verifier
 
 
+def test_macos_unsigned_artifact_contract_installs_pytest_mock_first() -> None:
+    macos_steps = _workflow()["jobs"]["macos"]["steps"]
+    step_names = [step.get("name") for step in macos_steps]
+    install_step = next(
+        step for step in macos_steps if step.get("name") == "Install build dependencies"
+    )
+
+    assert step_names.index("Install build dependencies") < step_names.index(
+        "Verify unsigned-artifact rejection contract"
+    )
+    assert any(
+        command.strip().startswith("python -m pip install ")
+        and "pytest-mock" in command.split()
+        for command in install_step["run"].splitlines()
+    )
+
+
 def test_macos_release_waits_for_notarization_and_checks_the_standalone_cli() -> None:
     macos_steps = _workflow()["jobs"]["macos"]["steps"]
     release_commands = next(
@@ -532,7 +549,7 @@ def test_committed_versions_are_bare_and_equal() -> None:
         re.MULTILINE,
     ).group(1)
 
-    assert project_version == runtime_version == "0.13.4"
+    assert project_version == runtime_version == "0.13.5"
     assert re.fullmatch(r"\d+\.\d+\.\d+", project_version)
 
 
