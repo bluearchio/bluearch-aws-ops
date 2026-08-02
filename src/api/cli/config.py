@@ -22,10 +22,13 @@ PUBLIC_OPS_VERSION_RE = re.compile(
 )
 
 
-def _trust_homebrew_formula(formula: str) -> bool:
+def _trust_homebrew_formula(formula: str, *, brew: Path | None = None) -> bool:
     """Trust one exact public formula before any Homebrew mutation."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None or formula not in PUBLIC_FORMULAS:
+        return False
     result = subprocess.run(
-        ["brew", "trust", "--formula", formula],
+        [str(brew), "trust", "--formula", formula],
         capture_output=False,
         text=True,
         timeout=60,
@@ -33,16 +36,25 @@ def _trust_homebrew_formula(formula: str) -> bool:
     return result.returncode == 0
 
 
-def _run_trusted_homebrew_formula(operation: str, formula: str, *, timeout: int = 300) -> bool:
+def _run_trusted_homebrew_formula(
+    operation: str,
+    formula: str,
+    *,
+    timeout: int = 300,
+    brew: Path | None = None,
+) -> bool:
     """Run one allowed install/upgrade only after its exact formula is trusted."""
     if operation not in {"install", "upgrade"} or formula not in PUBLIC_FORMULAS:
         raise ValueError("Unsupported Homebrew formula mutation")
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
     formulas_to_trust = (CORE_FORMULA, OPS_FORMULA) if formula == OPS_FORMULA else (formula,)
     for required_formula in formulas_to_trust:
-        if not _trust_homebrew_formula(required_formula):
+        if not _trust_homebrew_formula(required_formula, brew=brew):
             return False
     result = subprocess.run(
-        ["brew", operation, formula],
+        [str(brew), operation, formula],
         capture_output=False,
         text=True,
         timeout=timeout,
@@ -50,10 +62,13 @@ def _run_trusted_homebrew_formula(operation: str, formula: str, *, timeout: int 
     return result.returncode == 0
 
 
-def _trust_required_homebrew_formulas() -> bool:
+def _trust_required_homebrew_formulas(*, brew: Path | None = None) -> bool:
     """Trust Core and then Ops before loading any Ops tap metadata."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
     for formula in (CORE_FORMULA, OPS_FORMULA):
-        if not _trust_homebrew_formula(formula):
+        if not _trust_homebrew_formula(formula, brew=brew):
             return False
     return True
 
@@ -62,10 +77,13 @@ def _run_trusted_homebrew_outdated(formula: str = OPS_FORMULA):
     """Query the exact Ops formula only after Core and Ops trust succeeds."""
     if formula != OPS_FORMULA:
         raise ValueError("Unsupported Homebrew formula query")
-    if not _trust_required_homebrew_formulas():
+    brew = _canonical_homebrew_executable()
+    if brew is None:
+        raise RuntimeError("Could not resolve the Homebrew executable")
+    if not _trust_required_homebrew_formulas(brew=brew):
         raise RuntimeError("Could not trust the required Core and Ops formulas")
     result = subprocess.run(
-        ["brew", "outdated", formula],
+        [str(brew), "outdated", formula],
         capture_output=True,
         text=True,
         timeout=30,
@@ -108,9 +126,9 @@ def _single_absolute_directory(result: subprocess.CompletedProcess) -> Path | No
     return resolved if resolved.is_dir() else None
 
 
-def _formula_owned_core_binary() -> Path | None:
+def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
     """Resolve Core only from the exact trusted formula's active Cellar prefix."""
-    brew = _canonical_homebrew_executable()
+    brew = brew or _canonical_homebrew_executable()
     if brew is None:
         return None
 
@@ -168,12 +186,17 @@ def _version_tuple(version: str) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in str(version).split("."))
 
 
-def _installed_public_core_satisfies(required_core_version: str) -> bool:
+def _installed_public_core_satisfies(
+    required_core_version: str, *, brew: Path | None = None
+) -> bool:
     """Verify the exact trusted-formula Core binary and enforce its minimum."""
     required = _version_tuple(required_core_version)
     if required is None:
         return False
-    binary = _formula_owned_core_binary()
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    binary = _formula_owned_core_binary(brew=brew)
     if binary is None:
         return False
 
@@ -198,36 +221,42 @@ def _installed_public_core_satisfies(required_core_version: str) -> bool:
     return installed is not None and installed >= required
 
 
-def _update_homebrew_core(required_core_version: str) -> bool:
+def _update_homebrew_core(required_core_version: str, *, brew: Path | None = None) -> bool:
     """Install or upgrade Core, then verify its exact public runtime identity."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
     installed = subprocess.run(
-        ["brew", "list", "--versions", "bluearch-aws-core"],
+        [str(brew), "list", "--versions", CORE_FORMULA_NAME],
         capture_output=True,
         text=True,
         timeout=30,
     )
     operation = "upgrade" if installed.returncode == 0 and installed.stdout.strip() else "install"
-    succeeded = _run_trusted_homebrew_formula(operation, CORE_FORMULA)
+    succeeded = _run_trusted_homebrew_formula(operation, CORE_FORMULA, brew=brew)
     if not succeeded and operation == "upgrade":
-        succeeded = _run_trusted_homebrew_formula("install", CORE_FORMULA)
-    return succeeded and _installed_public_core_satisfies(required_core_version)
+        succeeded = _run_trusted_homebrew_formula("install", CORE_FORMULA, brew=brew)
+    return succeeded and _installed_public_core_satisfies(required_core_version, brew=brew)
 
 
 def _perform_homebrew_update(required_core_version: str) -> bool:
     """Update Homebrew and Core safely before upgrading the public Ops formula."""
-    if not _trust_required_homebrew_formulas():
+    brew = _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    if not _trust_required_homebrew_formulas(brew=brew):
         return False
     update_result = subprocess.run(
-        ["brew", "update"],
+        [str(brew), "update"],
         capture_output=True,
         text=True,
         timeout=120,
     )
     if update_result.returncode != 0:
         return False
-    if not _update_homebrew_core(required_core_version):
+    if not _update_homebrew_core(required_core_version, brew=brew):
         return False
-    return _run_trusted_homebrew_formula("upgrade", OPS_FORMULA)
+    return _run_trusted_homebrew_formula("upgrade", OPS_FORMULA, brew=brew)
 
 
 def _resolve_public_homebrew_binary(path: Path) -> Path | None:
@@ -421,14 +450,26 @@ def update(
             console.print("[red]bluearch-aws-core update failed. BlueArch CLI update was not started.[/red]")
         return succeeded
 
-    def perform_core_install(required_core_version: str, development_channel: bool) -> bool:
+    def perform_core_install(
+        required_core_version: str,
+        development_channel: bool,
+        *,
+        brew: Path | None = None,
+    ) -> bool:
         from utils.core_client import core_install_url
 
         install_url = core_install_url(development_channel)
         console.print(f"\n[blue]Ensuring bluearch-aws-core >= {required_core_version}...[/blue]")
         if not development_channel:
-            succeeded = _run_trusted_homebrew_formula("install", CORE_FORMULA)
-            return succeeded and _installed_public_core_satisfies(required_core_version)
+            brew = brew or _canonical_homebrew_executable()
+            if brew is None:
+                return False
+            succeeded = _run_trusted_homebrew_formula(
+                "install", CORE_FORMULA, brew=brew
+            )
+            return succeeded and _installed_public_core_satisfies(
+                required_core_version, brew=brew
+            )
         cmd = install_url
         console.print(f"[dim]Executing: {cmd}[/dim]")
         result = subprocess.run(cmd.split(), capture_output=False, text=True)
@@ -603,7 +644,13 @@ def update(
                     console.print("Update cancelled.")
                     return
 
-            if not perform_core_install(required_core_version, development):
+            brew = None if development else _canonical_homebrew_executable()
+            if not development and brew is None:
+                console.print("[red]Could not resolve the Homebrew executable.[/red]")
+                raise typer.Exit(1)
+            if not perform_core_install(
+                required_core_version, development, brew=brew
+            ):
                 console.print("[red]BlueArch Core update failed. BlueArch CLI update was not started.[/red]")
                 raise typer.Exit(1)
 
@@ -614,7 +661,9 @@ def update(
                 result = subprocess.run(cmd.split(), capture_output=False, text=True)
                 succeeded = result.returncode == 0
             else:
-                succeeded = _run_trusted_homebrew_formula("install", OPS_FORMULA)
+                succeeded = _run_trusted_homebrew_formula(
+                    "install", OPS_FORMULA, brew=brew
+                )
 
             if succeeded:
                 console.print("\n[green]Update completed successfully![/green]")

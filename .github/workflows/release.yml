@@ -49,9 +49,12 @@ jobs:
             echo "::error::Release tag must match vX.Y.Z exactly"
             exit 1
           }
-          git fetch --no-tags origin main:refs/remotes/origin/main
+          git fetch --no-tags origin \
+            dev:refs/remotes/origin/dev \
+            main:refs/remotes/origin/main
           tag_sha="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           head_sha="$(git rev-parse HEAD)"
+          dev_sha="$(git rev-parse origin/dev)"
           main_sha="$(git rev-parse origin/main)"
           test "$tag_sha" = "$head_sha" || {
             echo "::error::Checked-out HEAD must be the release tag commit"
@@ -59,6 +62,10 @@ jobs:
           }
           test "$head_sha" = "$main_sha" || {
             echo "::error::Release tag commit must be exactly origin/main"
+            exit 1
+          }
+          git merge-base --is-ancestor "$dev_sha" "$tag_sha" || {
+            echo "::error::origin/dev must be merged into the exact release commit (tag/HEAD/origin/main)"
             exit 1
           }
           python3 - <<'PY'

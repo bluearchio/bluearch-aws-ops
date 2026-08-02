@@ -38,6 +38,7 @@ def test_release_graph_verifies_tag_and_main_before_builds() -> None:
     assert set(jobs["publish"]["needs"]) == {"verify", "linux", "macos"}
     verify_commands = _run_text(jobs["verify"])
     assert "origin/main" in verify_commands
+    assert "dev:refs/remotes/origin/dev" in verify_commands
     assert "pyproject.toml" in verify_commands
     assert "version_controller.py" in verify_commands
     assert "pytest" in verify_commands
@@ -53,6 +54,8 @@ def test_release_source_gate_rejects_v_named_branches_and_ambiguous_refs() -> No
     assert 'head_sha="$(git rev-parse HEAD)"' in verify_commands
     assert 'test "$tag_sha" = "$head_sha"' in verify_commands
     assert 'test "$head_sha" = "$main_sha"' in verify_commands
+    assert 'dev_sha="$(git rev-parse origin/dev)"' in verify_commands
+    assert 'git merge-base --is-ancestor "$dev_sha" "$tag_sha"' in verify_commands
     assert 'git rev-list -n 1 "$RELEASE_TAG"' not in verify_commands
 
 
