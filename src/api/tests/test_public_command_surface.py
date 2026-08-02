@@ -1,3 +1,4 @@
+from click import unstyle
 from typer.testing import CliRunner
 
 import bluearch
@@ -43,10 +44,11 @@ def test_version_identifies_public_ops_and_trusts_before_outdated():
 def test_web_help_hides_the_core_managed_start_command():
     """Catches exposing direct dashboard startup that Core must manage."""
     result = CliRunner().invoke(bluearch.cli_app, ["web", "--help"])
+    plain_output = unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "│ start " not in result.output
-    assert "bluearch-aws-core start --daemon" in result.output
+    assert "│ start " not in plain_output
+    assert "bluearch-aws-core start --daemon" in plain_output
 
 
 def test_web_landing_page_does_not_advertise_direct_start():
