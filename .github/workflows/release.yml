@@ -379,24 +379,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if release_is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-            if [[ "${release_is_draft}" != "true" ]]; then
-              echo "::error::Release ${RELEASE_TAG} is already public and must never be mutated."
-              exit 1
-            fi
-            echo "Resuming existing draft release ${RELEASE_TAG}."
-          else
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft \
-              --verify-tag \
-              --title "$RELEASE_TAG" \
-              --generate-notes
-          fi
-          gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
-
-          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
-          [[ "${release_id}" =~ ^[0-9]+$ ]] || { echo "::error::Unable to resolve draft release ID"; exit 1; }
           local_assets="${RUNNER_TEMP}/local-release-assets.tsv"
           remote_assets="${RUNNER_TEMP}/remote-release-assets.tsv"
           remote_assets_tmp="${RUNNER_TEMP}/remote-release-assets.tmp"
@@ -409,20 +391,55 @@ jobs:
           done < <(find release-assets -maxdepth 1 -type f -print0)
           LC_ALL=C sort -o "${local_assets}" "${local_assets}"
 
-          assets_verified=false
-          for attempt in {1..24}; do
-            if gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
-              --jq '.[] | [.name, (.digest // "")] | @tsv' > "${remote_assets_tmp}"; then
-              LC_ALL=C sort "${remote_assets_tmp}" > "${remote_assets}"
-              if cmp -s "${local_assets}" "${remote_assets}"; then
-                assets_verified=true
-                break
+          verify_remote_assets() {
+            local attempt
+            for attempt in {1..24}; do
+              if gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+                --jq '.[] | [.name, (.digest // "")] | @tsv' > "${remote_assets_tmp}"; then
+                LC_ALL=C sort "${remote_assets_tmp}" > "${remote_assets}"
+                if cmp -s "${local_assets}" "${remote_assets}"; then
+                  return 0
+                fi
               fi
+              echo "::notice::Waiting for exact remote asset digests (attempt ${attempt}/24)."
+              sleep 5
+            done
+            return 1
+          }
+
+          release_exists=false
+          if release_info="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName --jq '[.databaseId, .tagName, .isDraft] | @tsv' 2>/dev/null)"; then
+            release_exists=true
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+            release_info="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName --jq '[.databaseId, .tagName, .isDraft] | @tsv')"
+          fi
+          IFS=$'\t' read -r release_id release_tag release_is_draft <<< "${release_info}"
+          [[ "${release_id}" =~ ^[0-9]+$ ]] || { echo "::error::Unable to resolve release ID"; exit 1; }
+          [[ "${release_tag}" == "${RELEASE_TAG}" ]] || { echo "::error::Release tag identity mismatch"; exit 1; }
+          [[ "${release_is_draft}" == "true" || "${release_is_draft}" == "false" ]] || { echo "::error::Invalid release draft state"; exit 1; }
+          tag_commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq '.sha')"
+          [[ "${tag_commit}" == "${GITHUB_SHA}" ]] || { echo "::error::Release tag target does not match the workflow commit"; exit 1; }
+
+          if [[ "${release_is_draft}" == "false" ]]; then
+            if verify_remote_assets; then
+              echo "Existing public release ${RELEASE_TAG} exactly matches the rebuilt verified assets; continuing without mutation."
+              exit 0
             fi
-            echo "::notice::Waiting for exact remote asset digests (attempt ${attempt}/24)."
-            sleep 5
-          done
-          if [[ "${assets_verified}" != "true" ]]; then
+            echo "::error::Existing public release does not exactly match the rebuilt verified assets and must never be mutated."
+            exit 1
+          fi
+          if [[ "${release_exists}" == "true" ]]; then
+            echo "Resuming existing draft release ${RELEASE_TAG}."
+          fi
+
+          gh release upload "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          if ! verify_remote_assets; then
             echo "::error::Remote release asset names and digests do not exactly match the verified local set."
             echo "Expected assets:"
             sed 's/^/  /' "${local_assets}"

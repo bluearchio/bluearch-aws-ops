@@ -122,9 +122,11 @@ gh attestation verify bluearch-aws-ops-linux-x86_64.tar.gz --repo bluearchio/blu
 
 For macOS, verify `bluearch-aws-ops-macos-arm64.zip` with `gh attestation verify`.
 
-The publish job can safely resume an existing draft, but it refuses to alter an
-already-public release. Before publication it verifies that the remote asset
-names and GitHub-provided SHA-256 digests exactly match the local release set.
+The publish job can safely resume an existing draft. If a runner stops after
+making the release public but before the job completes, an existing public
+release is accepted only when its tag target and every remote asset name and
+GitHub-provided SHA-256 digest exactly match the rebuilt local set. The workflow
+then continues without mutating it; any mismatch fails closed.
 
 After publication, a separate Homebrew job checks out
 `bluearchio/homebrew-tap` at `main`, uses its `scripts/update_formula.py` to
@@ -133,10 +135,10 @@ opens or updates `release/bluearch-aws-ops-vX.Y.Z`. It requests an automatic
 squash merge and waits up to two hours for the pull request to report `MERGED`;
 the product release workflow does not succeed merely because auto-merge was
 requested. A failed Homebrew job can be rerun without republishing the immutable
-release: use GitHub Actions' **Re-run failed jobs** action. Do not use the
-**Re-run all jobs** action after publication; a full workflow rerun intentionally
-rejects the already-public release. Before creating a release tag, the tap must
-have auto-merge enabled and
+release: use GitHub Actions' **Re-run failed jobs** action. **Re-run all jobs**
+is reserved for exact crash recovery and succeeds after publication only under
+the tag-target and asset/digest equality checks above. Before creating a release
+tag, the tap must have auto-merge enabled and
 `main` protected by its required CI checks. Configure `HOMEBREW_TAP_TOKEN_2` as
 a fine-grained token for that tap with Contents and Pull requests read/write
 access.

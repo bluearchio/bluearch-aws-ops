@@ -92,7 +92,7 @@ def test_publish_commands_are_explicitly_repository_scoped() -> None:
         step["run"] for step in publish["steps"] if step.get("name") == "Publish or resume verified draft release"
     )
 
-    assert publish_commands.count('--repo "$GITHUB_REPOSITORY"') == 4
+    assert publish_commands.count('--repo "$GITHUB_REPOSITORY"') == 5
     assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
     assert 'gh release create "$RELEASE_TAG"' in publish_commands
     assert 'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' in publish_commands
@@ -197,7 +197,7 @@ def test_homebrew_job_waits_for_actual_merge_and_retries_transient_reads() -> No
     assert "Timed out after 2 hours" in commands
 
 
-def test_publish_resumes_only_drafts_and_verifies_exact_remote_digests() -> None:
+def test_publish_recovers_only_exact_public_release_and_verifies_remote_digests() -> None:
     jobs = _workflow()["jobs"]
     publish = jobs["publish"]
     commands = next(
@@ -205,9 +205,12 @@ def test_publish_resumes_only_drafts_and_verifies_exact_remote_digests() -> None
     )
 
     assert not any(step.get("name") == "Checkout Homebrew tap main" for step in publish["steps"])
-    assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft' in commands
-    assert '"${release_is_draft}" != "true"' in commands
-    assert "already public and must never be mutated" in commands
+    assert 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,tagName' in commands
+    assert 'repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}' in commands
+    assert '"${tag_commit}" == "${GITHUB_SHA}"' in commands
+    assert 'if [[ "${release_is_draft}" == "false" ]]' in commands
+    assert "continuing without mutation" in commands
+    assert "must never be mutated" in commands
     assert "Resuming existing draft release" in commands
     assert 'gh release create "$RELEASE_TAG" \\' in commands
     assert 'gh release create "$RELEASE_TAG" release-assets' not in commands
@@ -215,14 +218,19 @@ def test_publish_resumes_only_drafts_and_verifies_exact_remote_digests() -> None
     assert "(.digest // \"\")" in commands
     assert "sha256:%s" in commands
     assert 'cmp -s "${local_assets}" "${remote_assets}"' in commands
-    assert commands.index("already public and must never be mutated") < commands.index("gh release upload")
-    assert commands.index("gh release upload") < commands.index("(.digest //")
-    assert commands.index("assets_verified") < commands.index('gh release edit "$RELEASE_TAG"')
+    public_index = commands.index('if [[ "${release_is_draft}" == "false" ]]')
+    upload_index = commands.index("gh release upload")
+    assert public_index < commands.index("if verify_remote_assets", public_index) < upload_index
+    assert commands.index("continuing without mutation", public_index) < upload_index
+    assert commands.index("must never be mutated", public_index) < upload_index
+    assert upload_index < commands.index("if ! verify_remote_assets")
+    assert commands.index("if ! verify_remote_assets") < commands.index('gh release edit "$RELEASE_TAG"')
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     normalized_readme = " ".join(readme.replace("**", "").split())
     assert "Re-run failed jobs" in normalized_readme
     assert "Re-run all jobs" in normalized_readme
-    assert "full workflow rerun intentionally rejects" in normalized_readme
+    assert "existing public release is accepted only when" in normalized_readme
+    assert "without mutating it" in normalized_readme
 
 
 def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
