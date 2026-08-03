@@ -121,7 +121,7 @@ def _run_installer(
         dist / "core",
         CORE_ASSET_NAME,
         CORE_BINARY_NAME,
-        "bluearch-aws-core 0.2.6",
+        "bluearch-aws-core 0.2.9",
     )
     fake_bin = tmp_path / "fake-bin"
     _write_fake_tools(fake_bin)
@@ -186,7 +186,7 @@ def test_installer_keeps_compatible_canonical_public_core(tmp_path: Path, real_s
         [BINARY_NAME],
         None,
         core_policy="missing",
-        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.6"),
+        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.9"),
     )
 
     assert result.returncode == 0, result.stderr
@@ -221,7 +221,7 @@ def test_installer_replaces_public_named_core_with_legacy_version_identity(
     assert result.returncode == 0, result.stderr
     installed_core = tmp_path / "install" / CORE_BINARY_NAME
     assert installed_core.is_file()
-    assert "bluearch-aws-core 0.2.6" in installed_core.read_text(encoding="utf-8")
+    assert "bluearch-aws-core 0.2.9" in installed_core.read_text(encoding="utf-8")
     assert "/bluearch-aws-core/" in (tmp_path / "curl.log").read_text(encoding="utf-8")
 
 
@@ -231,11 +231,11 @@ def test_installer_replaces_outdated_public_core_target(tmp_path: Path, real_sub
         [BINARY_NAME],
         None,
         core_policy="missing",
-        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.5"),
+        core_candidate=(CORE_BINARY_NAME, "bluearch-aws-core 0.2.8"),
     )
 
     assert result.returncode == 0, result.stderr
     installed_core = tmp_path / "install" / CORE_BINARY_NAME
     assert installed_core.is_file()
-    assert "0.2.6" in installed_core.read_text(encoding="utf-8")
+    assert "0.2.9" in installed_core.read_text(encoding="utf-8")
     assert "/bluearch-aws-core/" in (tmp_path / "curl.log").read_text(encoding="utf-8")
