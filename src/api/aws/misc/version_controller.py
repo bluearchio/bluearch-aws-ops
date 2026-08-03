@@ -7,7 +7,7 @@ import os
 
 # The committed bare version is the release source of truth. Development and
 # packaging tools may still override it explicitly for local diagnostics.
-CURRENT_VERSION = os.environ.get("BLUEARCH_AWS_OPS_VERSION", "0.13.7")
+CURRENT_VERSION = os.environ.get("BLUEARCH_AWS_OPS_VERSION", "0.13.8")
 
 
 def get_updates() -> list[dict]:

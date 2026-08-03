@@ -331,6 +331,37 @@ def test_macos_release_waits_for_notarization_and_checks_the_standalone_cli() ->
     assert "spctl --assess" not in macos_verifier
 
 
+def test_macos_release_gates_v0137_nuitka_brownfield_handoff_after_signing() -> None:
+    macos_steps = _workflow()["jobs"]["macos"]["steps"]
+    names = [step.get("name") for step in macos_steps]
+    sign_index = names.index("Sign, notarize, and verify final macOS archive")
+    gate_index = names.index("Brownfield smoke-test v0.13.7 Nuitka daemon handoff")
+    upload_index = next(
+        index
+        for index, step in enumerate(macos_steps)
+        if step.get("uses") == "actions/upload-artifact@v4"
+    )
+    commands = macos_steps[gate_index]["run"]
+
+    assert sign_index < gate_index < upload_index
+    assert "releases/download/v0.13.7/$BINARY_NAME-macos-arm64.zip" in commands
+    assert "06821efaa125bbcfb94442188a08936912f8058e2934dffa6cd07b65905434e1" in commands
+    assert 'install -m 0755 "dist/$BINARY_NAME" "$candidate_binary"' in commands
+    assert '("127.0.0.1", 28094)' in commands
+    assert '"BLUEARCH_CORE_URL=http://127.0.0.1:28094"' in commands
+    assert '"TMPDIR=$brownfield_tmp"' in commands
+    assert '[[ "$old_supervisor_pid" != "$old_listener_pid" ]]' in commands
+    assert 'rm -rf "$brownfield_dir/homebrew/Cellar/$BINARY_NAME/0.13.7"' in commands
+    assert 'if kill -0 "$old_supervisor_pid"' in commands
+    assert 'if kill -0 "$old_listener_pid"' in commands
+    assert 'record["schema"] == 2' in commands
+    assert 'listener["argv"][0] == os.environ["EXPECTED_LAUNCHER"]' in commands
+    assert 'expected_dir = re.compile("^" + re.escape(binary)' in commands
+    assert 'runtime.parent.parent.resolve() == Path(os.environ["EXPECTED_TEMP_ROOT"]).resolve()' in commands
+    assert 'env "${runtime_env[@]}" "$candidate_binary" web stop' in commands
+    assert 'test ! -e "$pid_file"' in commands
+
+
 def test_release_generates_sboms_from_final_archives_in_separate_ubuntu_job() -> None:
     jobs = _workflow()["jobs"]
     sbom = jobs["sbom"]
@@ -540,6 +571,24 @@ def test_runtime_identity_dependency_is_declared_and_bundled() -> None:
     assert "import psutil" in entrypoint
 
 
+@pytest.mark.parametrize(
+    "script_name",
+    ["build_nuitka_linux.sh", "build_nuitka_macos.sh"],
+)
+def test_onefile_runtime_uses_unique_product_specific_system_temp_directory(
+    script_name: str,
+) -> None:
+    build_script = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+
+    assert 'if [ -z "${ONEFILE_TEMPDIR:-}" ]; then' in build_script
+    assert (
+        'ONEFILE_TEMPDIR="{TEMP}/bluearch-aws-ops_{PID}_{TIME}"'
+        in build_script
+    )
+    assert '--onefile-tempdir-spec="$ONEFILE_TEMPDIR"' in build_script
+    assert "{HOME}/.bluearch-aws-ops/bin" not in build_script
+
+
 def test_legacy_binary_overwrite_updater_is_not_shipped() -> None:
     execution_source = (ROOT / "src" / "api" / "commons" / "execution.py").read_text(
         encoding="utf-8"
@@ -561,7 +610,7 @@ def test_committed_versions_are_bare_and_equal() -> None:
         re.MULTILINE,
     ).group(1)
 
-    assert project_version == runtime_version == "0.13.7"
+    assert project_version == runtime_version == "0.13.8"
     assert re.fullmatch(r"\d+\.\d+\.\d+", project_version)
 
 
@@ -583,7 +632,7 @@ def test_module_version_probe_is_exact_and_stateless(
     )
 
     assert result.returncode == 0
-    assert result.stdout == "bluearch-aws-ops 0.13.7\n"
+    assert result.stdout == "bluearch-aws-ops 0.13.8\n"
     assert result.stderr == ""
     assert list(home.iterdir()) == []
 

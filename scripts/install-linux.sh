@@ -13,7 +13,7 @@ CORE_REPO="bluearchio/bluearch-aws-core"
 CORE_BINARY_NAME="bluearch-aws-core"
 CORE_ASSET_NAME="bluearch-aws-core-linux-x86_64.tar.gz"
 CORE_VERSION="${BLUEARCH_CORE_VERSION:-latest}"
-MINIMUM_CORE_VERSION="0.2.6"
+MINIMUM_CORE_VERSION="0.2.9"
 CORE_INSTALL_POLICY="${BLUEARCH_INSTALL_CORE:-missing}"
 TEMP_DIRS=()
 

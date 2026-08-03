@@ -373,6 +373,171 @@ jobs:
             "artifacts/$BINARY_NAME-macos-arm64.zip" \
             "$BINARY_NAME" \
             "${RELEASE_TAG#v}"
+      - name: Brownfield smoke-test v0.13.7 Nuitka daemon handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          brownfield_dir="$(mktemp -d "$RUNNER_TEMP/bluearch-ops-brownfield.XXXXXX")"
+          brownfield_home="$brownfield_dir/home"
+          brownfield_tmp="$brownfield_dir/tmp"
+          old_prefix="$brownfield_dir/homebrew/Cellar/$BINARY_NAME/0.13.7/bin"
+          new_prefix="$brownfield_dir/homebrew/Cellar/$BINARY_NAME/${RELEASE_TAG#v}/bin"
+          old_binary="$old_prefix/$BINARY_NAME"
+          candidate_binary="$new_prefix/$BINARY_NAME"
+          pid_file="$brownfield_home/.bluearch-aws-ops/runtime/web-server.pid"
+          old_supervisor_pid=""
+          old_listener_pid=""
+          new_supervisor_pid=""
+          new_listener_pid=""
+          fake_core_pid=""
+
+          cleanup() {
+            local pid command
+            for pid in "$new_listener_pid" "$new_supervisor_pid" "$old_listener_pid" "$old_supervisor_pid"; do
+              [[ "$pid" =~ ^[0-9]+$ ]] || continue
+              command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+              if [[ "$command" == *"$brownfield_dir"* ]]; then
+                kill -TERM "$pid" 2>/dev/null || true
+              fi
+            done
+            if [[ "$fake_core_pid" =~ ^[0-9]+$ ]]; then
+              if [[ "$(lsof -nP -iTCP:28094 -sTCP:LISTEN -t 2>/dev/null || true)" == "$fake_core_pid" ]]; then
+                kill -TERM "$fake_core_pid" 2>/dev/null || true
+              fi
+            fi
+            rm -rf "$brownfield_dir"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$brownfield_home" "$brownfield_tmp" "$old_prefix" "$new_prefix"
+          old_archive="$brownfield_dir/$BINARY_NAME-v0.13.7.zip"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "https://github.com/bluearchio/bluearch-aws-ops/releases/download/v0.13.7/$BINARY_NAME-macos-arm64.zip" \
+            --output "$old_archive"
+          echo "06821efaa125bbcfb94442188a08936912f8058e2934dffa6cd07b65905434e1  $old_archive" \
+            | shasum -a 256 --check
+          old_extract="$brownfield_dir/old-asset"
+          mkdir -p "$old_extract"
+          ditto -x -k "$old_archive" "$old_extract"
+          test -x "$old_extract/$BINARY_NAME"
+          install -m 0755 "$old_extract/$BINARY_NAME" "$old_binary"
+          install -m 0755 "dist/$BINARY_NAME" "$candidate_binary"
+          codesign --verify --deep --strict --verbose=2 "$candidate_binary"
+
+          python3 - <<'PY' &
+          import http.server
+          import json
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path.startswith("/api/v1/core/dependency/status"):
+                      body = {
+                          "app": "bluearch-aws-ops",
+                          "core_installed": True,
+                          "core_running": True,
+                          "compatible": True,
+                          "core_version": "0.2.9",
+                          "minimum_required_core_version": "0.2.9",
+                          "message": "ready",
+                      }
+                  else:
+                      body = {
+                          "service": "bluearch-aws-core",
+                          "version": "0.2.9",
+                          "status": "healthy",
+                          "db_ready": True,
+                      }
+                  payload = json.dumps(body).encode("utf-8")
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(payload)))
+                  self.end_headers()
+                  self.wfile.write(payload)
+
+              def log_message(self, *_args):
+                  return
+
+          http.server.ThreadingHTTPServer(("127.0.0.1", 28094), Handler).serve_forever()
+          PY
+          fake_core_pid="$!"
+          for _ in {1..50}; do
+            curl --fail --silent --show-error --max-time 1 \
+              "http://127.0.0.1:28094/api/v1/core/health" >/dev/null && break
+            sleep 0.1
+          done
+          curl --fail --silent --show-error --max-time 1 \
+            "http://127.0.0.1:28094/api/v1/core/health" >/dev/null
+
+          runtime_env=(
+            "HOME=$brownfield_home"
+            "TMPDIR=$brownfield_tmp"
+            "BLUEARCH_CORE_URL=http://127.0.0.1:28094"
+            "BLUEARCH_CORE_MANAGED_WEB_START=1"
+          )
+          env "${runtime_env[@]}" "$old_binary" web start --daemon \
+            --host 127.0.0.1 --port 8095 --log-level info --no-browser
+          old_supervisor_pid="$(PID_FILE="$pid_file" python3 -c 'import json, os; print(json.load(open(os.environ["PID_FILE"], encoding="utf-8"))["pid"])')"
+          old_listener_pid="$(lsof -nP -iTCP:8095 -sTCP:LISTEN -t)"
+          [[ "$old_supervisor_pid" =~ ^[0-9]+$ ]]
+          [[ "$old_listener_pid" =~ ^[0-9]+$ ]]
+          [[ "$old_supervisor_pid" != "$old_listener_pid" ]]
+          [[ "$(ps -p "$old_listener_pid" -o ppid= | tr -d '[:space:]')" == "$old_supervisor_pid" ]]
+          OLD_LISTENER_PID="$old_listener_pid" EXPECTED_NUITKA_BINARY="$brownfield_home/.bluearch-aws-ops/bin/$BINARY_NAME.bin" \
+            python3 -c 'import os, psutil; process = psutil.Process(int(os.environ["OLD_LISTENER_PID"])); assert process.exe() == os.environ["EXPECTED_NUITKA_BINARY"]'
+
+          rm -rf "$brownfield_dir/homebrew/Cellar/$BINARY_NAME/0.13.7"
+          env "${runtime_env[@]}" "$candidate_binary" web start --daemon \
+            --host 127.0.0.1 --port 8095 --log-level info --no-browser
+
+          for _ in {1..100}; do
+            if ! kill -0 "$old_supervisor_pid" 2>/dev/null \
+              && ! kill -0 "$old_listener_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$old_supervisor_pid" 2>/dev/null; then
+            echo "::error::The v0.13.7 Nuitka supervisor is still running"
+            exit 1
+          fi
+          if kill -0 "$old_listener_pid" 2>/dev/null; then
+            echo "::error::The v0.13.7 Nuitka listener is still running"
+            exit 1
+          fi
+
+          test -s "$pid_file"
+          new_listener_pid="$(PID_FILE="$pid_file" python3 -c 'import json, os; print(json.load(open(os.environ["PID_FILE"], encoding="utf-8"))["listener"]["pid"])')"
+          new_supervisor_pid="$(PID_FILE="$pid_file" python3 -c 'import json, os; print(json.load(open(os.environ["PID_FILE"], encoding="utf-8"))["supervisor"]["pid"])')"
+          [[ "$new_listener_pid" =~ ^[0-9]+$ ]]
+          [[ "$new_supervisor_pid" =~ ^[0-9]+$ ]]
+          [[ "$new_listener_pid" != "$new_supervisor_pid" ]]
+          [[ "$(lsof -nP -iTCP:8095 -sTCP:LISTEN -t)" == "$new_listener_pid" ]]
+          PID_FILE="$pid_file" EXPECTED_PID="$new_listener_pid" EXPECTED_SUPERVISOR_PID="$new_supervisor_pid" EXPECTED_LAUNCHER="$candidate_binary" EXPECTED_TEMP_ROOT="$brownfield_tmp" BINARY_NAME="$BINARY_NAME" \
+            python3 -c 'import json, os, re; from pathlib import Path; record = json.load(open(os.environ["PID_FILE"], encoding="utf-8")); listener = record["listener"]; supervisor = record["supervisor"]; runtime = Path(listener["executable"]); binary = os.environ["BINARY_NAME"]; supervisor_pid = os.environ["EXPECTED_SUPERVISOR_PID"]; expected_dir = re.compile("^" + re.escape(binary) + "_" + re.escape(supervisor_pid) + "_[0-9]+_[0-9]+$"); assert record["schema"] == 2; assert listener["pid"] == int(os.environ["EXPECTED_PID"]); assert supervisor["pid"] == int(supervisor_pid); assert listener["argv"][0] == os.environ["EXPECTED_LAUNCHER"]; assert runtime.name == binary + ".bin"; assert expected_dir.fullmatch(runtime.parent.name); assert runtime.parent.parent.resolve() == Path(os.environ["EXPECTED_TEMP_ROOT"]).resolve()'
+          health="$(curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8095/api/v1/system/health)"
+          HEALTH="$health" python3 -c 'import json, os; assert json.loads(os.environ["HEALTH"])["service"] == "bluearch-aws-ops"'
+
+          env "${runtime_env[@]}" "$candidate_binary" web stop
+          for _ in {1..100}; do
+            if ! kill -0 "$new_supervisor_pid" 2>/dev/null \
+              && ! kill -0 "$new_listener_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$new_supervisor_pid" 2>/dev/null; then
+            echo "::error::The candidate Nuitka supervisor survived a clean stop"
+            exit 1
+          fi
+          if kill -0 "$new_listener_pid" 2>/dev/null; then
+            echo "::error::The candidate Nuitka listener survived a clean stop"
+            exit 1
+          fi
+          if lsof -nP -iTCP:8095 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "::error::The candidate left port 8095 occupied after stop"
+            exit 1
+          fi
+          test ! -e "$pid_file"
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos-arm64
