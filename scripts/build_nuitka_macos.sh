@@ -7,7 +7,7 @@ SOURCE_ROOT="${SOURCE_ROOT:-src/api}"
 ENTRY_IMPORT="${ENTRY_IMPORT:-bluearch}"
 APP_OBJECT="${APP_OBJECT:-run}"
 if [ -z "${ONEFILE_TEMPDIR:-}" ]; then
-  ONEFILE_TEMPDIR="{HOME}/.bluearch-aws-ops/bin"
+  ONEFILE_TEMPDIR="{TEMP}/bluearch-aws-ops_{PID}_{TIME}"
 fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

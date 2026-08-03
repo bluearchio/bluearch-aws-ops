@@ -17,7 +17,7 @@ DEFAULT_CORE_PORT = 8094
 DEFAULT_TOKEN_PATH = Path.home() / ".bluearch-core" / "runtime" / "api-token"
 # Release-owned product requirement. Bump this only when the BlueArch CLI starts
 # using a bluearch-aws-core API or behavior that older core versions do not support.
-DEFAULT_MINIMUM_CORE_VERSION = "0.2.6"
+DEFAULT_MINIMUM_CORE_VERSION = "0.2.9"
 MINIMUM_CORE_VERSION = os.environ.get("BLUEARCH_MINIMUM_CORE_VERSION", DEFAULT_MINIMUM_CORE_VERSION)
 PROD_CORE_INSTALL_URL = "brew install bluearchio/tap/bluearch-aws-core"
 DEV_CORE_INSTALL_URL = "pipx install -e ../bluearch-aws-core"

@@ -11,6 +11,7 @@ CORE_FORMULA = "bluearchio/tap/bluearch-aws-core"
 OPS_FORMULA = "bluearchio/tap/bluearch-aws-ops"
 PUBLIC_FORMULAS = frozenset({CORE_FORMULA, OPS_FORMULA})
 CORE_FORMULA_NAME = "bluearch-aws-core"
+OPS_FORMULA_NAME = "bluearch-aws-ops"
 PUBLIC_CORE_EXECUTABLE = "bluearch-aws-core"
 PUBLIC_CORE_VERSION_RE = re.compile(
     rf"{re.escape(PUBLIC_CORE_EXECUTABLE)} ([0-9]+\.[0-9]+\.[0-9]+)"
@@ -20,6 +21,10 @@ PUBLIC_OPS_EXECUTABLE = "bluearch-aws-ops"
 PUBLIC_OPS_VERSION_RE = re.compile(
     rf"{re.escape(PUBLIC_OPS_EXECUTABLE)} [0-9]+\.[0-9]+\.[0-9]+"
 )
+FORMULA_EXECUTABLES = {
+    CORE_FORMULA: (CORE_FORMULA_NAME, PUBLIC_CORE_EXECUTABLE),
+    OPS_FORMULA: (OPS_FORMULA_NAME, PUBLIC_OPS_EXECUTABLE),
+}
 
 
 def _trust_homebrew_formula(formula: str, *, brew: Path | None = None) -> bool:
@@ -126,8 +131,14 @@ def _single_absolute_directory(result: subprocess.CompletedProcess) -> Path | No
     return resolved if resolved.is_dir() else None
 
 
-def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
-    """Resolve Core only from the exact trusted formula's active Cellar prefix."""
+def _formula_owned_binary(
+    formula: str, *, brew: Path | None = None
+) -> Path | None:
+    """Resolve one allowlisted binary from its exact active Cellar prefix."""
+    formula_identity = FORMULA_EXECUTABLES.get(formula)
+    if formula_identity is None:
+        return None
+    formula_name, executable_name = formula_identity
     brew = brew or _canonical_homebrew_executable()
     if brew is None:
         return None
@@ -135,9 +146,10 @@ def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
     verification_env = os.environ.copy()
     verification_env.pop("BLUEARCH_CORE_BINARY", None)
     verification_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    verification_env.pop("BLUEARCH_CORE_BLUEARCH_CMD", None)
     try:
         prefix_result = subprocess.run(
-            [str(brew), "--prefix", CORE_FORMULA],
+            [str(brew), "--prefix", formula],
             capture_output=True,
             text=True,
             timeout=30,
@@ -161,22 +173,32 @@ def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
         prefix_parts = prefix.relative_to(cellar).parts
     except ValueError:
         return None
-    if len(prefix_parts) != 2 or prefix_parts[0] != CORE_FORMULA_NAME:
+    if len(prefix_parts) != 2 or prefix_parts[0] != formula_name:
         return None
 
-    candidate = prefix / "bin" / PUBLIC_CORE_EXECUTABLE
+    candidate = prefix / "bin" / executable_name
     try:
         resolved = candidate.resolve(strict=True)
         resolved.relative_to(prefix)
     except (OSError, RuntimeError, ValueError):
         return None
     if (
-        resolved.name != PUBLIC_CORE_EXECUTABLE
+        resolved.name != executable_name
         or not resolved.is_file()
         or not os.access(resolved, os.X_OK)
     ):
         return None
     return resolved
+
+
+def _formula_owned_core_binary(*, brew: Path | None = None) -> Path | None:
+    """Resolve Core only from the exact trusted formula's active Cellar prefix."""
+    return _formula_owned_binary(CORE_FORMULA, brew=brew)
+
+
+def _formula_owned_ops_binary(*, brew: Path | None = None) -> Path | None:
+    """Resolve Ops only from the exact trusted formula's active Cellar prefix."""
+    return _formula_owned_binary(OPS_FORMULA, brew=brew)
 
 
 def _version_tuple(version: str) -> tuple[int, int, int] | None:
@@ -239,6 +261,39 @@ def _update_homebrew_core(required_core_version: str, *, brew: Path | None = Non
     return succeeded and _installed_public_core_satisfies(required_core_version, brew=brew)
 
 
+def _restart_formula_owned_core_runtime(*, brew: Path | None = None) -> bool:
+    """Reconcile Core and Ops through their exact public formula binaries."""
+    brew = brew or _canonical_homebrew_executable()
+    if brew is None:
+        return False
+    core_binary = _formula_owned_core_binary(brew=brew)
+    ops_binary = _formula_owned_ops_binary(brew=brew)
+    if core_binary is None or ops_binary is None:
+        return False
+
+    runtime_env = os.environ.copy()
+    runtime_env.pop("BLUEARCH_CORE_BINARY", None)
+    runtime_env.pop("BLUEARCH_MINIMUM_CORE_VERSION", None)
+    runtime_env["BLUEARCH_CORE_BLUEARCH_CMD"] = str(ops_binary)
+    try:
+        result = subprocess.run(
+            [
+                str(core_binary),
+                "start",
+                "--daemon",
+                "--web-apps",
+                "bluearch-aws-ops",
+            ],
+            capture_output=False,
+            text=True,
+            timeout=300,
+            env=runtime_env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _perform_homebrew_update(required_core_version: str) -> bool:
     """Update Homebrew and Core safely before upgrading the public Ops formula."""
     brew = _canonical_homebrew_executable()
@@ -256,7 +311,9 @@ def _perform_homebrew_update(required_core_version: str) -> bool:
         return False
     if not _update_homebrew_core(required_core_version, brew=brew):
         return False
-    return _run_trusted_homebrew_formula("upgrade", OPS_FORMULA, brew=brew)
+    if not _run_trusted_homebrew_formula("upgrade", OPS_FORMULA, brew=brew):
+        return False
+    return _restart_formula_owned_core_runtime(brew=brew)
 
 
 def _resolve_public_homebrew_binary(path: Path) -> Path | None:
@@ -447,7 +504,10 @@ def update(
         console.print("[dim]Updating Homebrew tap...[/dim]")
         succeeded = _perform_homebrew_update(required_core_version)
         if not succeeded:
-            console.print("[red]bluearch-aws-core update failed. BlueArch CLI update was not started.[/red]")
+            console.print(
+                "[red]Homebrew update or bluearch-aws-core runtime restart failed. "
+                "Verify the runtime before continuing.[/red]"
+            )
         return succeeded
 
     def perform_core_install(

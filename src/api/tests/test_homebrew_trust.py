@@ -11,12 +11,17 @@ def _make_formula_layout(tmp_path, version="0.2.6"):
     cellar = homebrew / "Cellar"
     prefix = cellar / "bluearch-aws-core" / version
     core = prefix / "bin" / "bluearch-aws-core"
+    ops_prefix = cellar / "bluearch-aws-ops" / "0.13.8"
+    ops = ops_prefix / "bin" / "bluearch-aws-ops"
     brew.parent.mkdir(parents=True)
     core.parent.mkdir(parents=True)
+    ops.parent.mkdir(parents=True)
     brew.write_text("#!/bin/sh\n", encoding="utf-8")
     core.write_text("#!/bin/sh\n", encoding="utf-8")
+    ops.write_text("#!/bin/sh\n", encoding="utf-8")
     brew.chmod(0o755)
     core.chmod(0o755)
+    ops.chmod(0o755)
     return brew.resolve(), cellar.resolve(), prefix.resolve(), core.resolve()
 
 
@@ -31,12 +36,24 @@ def _homebrew_update_runner(
     core_returncode=0,
     prefix_output=None,
     prefix_returncode=0,
+    ops_prefix=None,
+    ops_prefix_output=None,
+    ops_prefix_returncode=0,
 ):
+    ops_prefix = ops_prefix or cellar / config.OPS_FORMULA_NAME / "0.13.8"
+
     def run(command, **kwargs):
         commands.append((command, kwargs))
         if command == [str(brew), "--prefix", config.CORE_FORMULA]:
             stdout = f"{prefix}\n" if prefix_output is None else prefix_output
             return SimpleNamespace(returncode=prefix_returncode, stdout=stdout, stderr="")
+        if command == [str(brew), "--prefix", config.OPS_FORMULA]:
+            stdout = f"{ops_prefix}\n" if ops_prefix_output is None else ops_prefix_output
+            return SimpleNamespace(
+                returncode=ops_prefix_returncode,
+                stdout=stdout,
+                stderr="",
+            )
         if command == [str(brew), "--cellar"]:
             return SimpleNamespace(returncode=0, stdout=f"{cellar}\n", stderr="")
         if command == [str(core), "--version"]:
@@ -161,9 +178,17 @@ def test_homebrew_update_trusts_both_formulas_and_verifies_formula_core_before_o
     monkeypatch, tmp_path
 ):
     brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    ops_prefix = cellar / config.OPS_FORMULA_NAME / "0.13.8"
+    ops = (ops_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE).resolve()
     commands = []
     fake_override = tmp_path / "fake" / "bluearch-aws-core"
+    fake_ops = tmp_path / "fake" / "bluearch-aws-ops"
+    fake_ops.parent.mkdir()
+    fake_ops.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_ops.chmod(0o755)
     monkeypatch.setenv("BLUEARCH_CORE_BINARY", str(fake_override))
+    monkeypatch.setenv("BLUEARCH_CORE_BLUEARCH_CMD", str(fake_ops))
+    monkeypatch.setenv("PATH", str(fake_ops.parent))
     monkeypatch.setattr(config.shutil, "which", lambda name: str(brew) if name == "brew" else None)
     monkeypatch.setattr(
         config.subprocess,
@@ -187,9 +212,74 @@ def test_homebrew_update_trusts_both_formulas_and_verifies_formula_core_before_o
         [str(brew), "trust", "--formula", config.CORE_FORMULA],
         [str(brew), "trust", "--formula", config.OPS_FORMULA],
         [str(brew), "upgrade", config.OPS_FORMULA],
+        [str(brew), "--prefix", config.CORE_FORMULA],
+        [str(brew), "--cellar"],
+        [str(brew), "--prefix", config.OPS_FORMULA],
+        [str(brew), "--cellar"],
+        [
+            str(core),
+            "start",
+            "--daemon",
+            "--web-apps",
+            "bluearch-aws-ops",
+        ],
     ]
     core_kwargs = next(kwargs for command, kwargs in commands if command == [str(core), "--version"])
     assert "BLUEARCH_CORE_BINARY" not in core_kwargs["env"]
+    restart_kwargs = next(
+        kwargs
+        for command, kwargs in commands
+        if command
+        == [
+            str(core),
+            "start",
+            "--daemon",
+            "--web-apps",
+            "bluearch-aws-ops",
+        ]
+    )
+    assert "BLUEARCH_CORE_BINARY" not in restart_kwargs["env"]
+    assert "BLUEARCH_MINIMUM_CORE_VERSION" not in restart_kwargs["env"]
+    assert restart_kwargs["env"]["BLUEARCH_CORE_BLUEARCH_CMD"] == str(ops)
+    assert [str(fake_ops)] not in [command for command, _ in commands]
+    ops_prefix_kwargs = next(
+        kwargs
+        for command, kwargs in commands
+        if command == [str(brew), "--prefix", config.OPS_FORMULA]
+    )
+    assert "BLUEARCH_CORE_BLUEARCH_CMD" not in ops_prefix_kwargs["env"]
+
+
+def test_homebrew_update_fails_when_public_core_runtime_cannot_restart(monkeypatch, tmp_path):
+    brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    commands = []
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(brew) if name == "brew" else None)
+    base_runner = _homebrew_update_runner(
+        commands, brew=brew, cellar=cellar, prefix=prefix, core=core
+    )
+
+    def run(command, **kwargs):
+        result = base_runner(command, **kwargs)
+        if command == [
+            str(core),
+            "start",
+            "--daemon",
+            "--web-apps",
+            "bluearch-aws-ops",
+        ]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="runtime conflict")
+        return result
+
+    monkeypatch.setattr(config.subprocess, "run", run)
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    assert [
+        str(core),
+        "start",
+        "--daemon",
+        "--web-apps",
+        "bluearch-aws-ops",
+    ] in [command for command, _ in commands]
 
 
 def test_homebrew_update_pins_one_canonical_brew_when_path_is_retargeted(
@@ -392,6 +482,144 @@ def test_homebrew_update_blocks_formula_prefix_outside_homebrew_cellar(monkeypat
     assert [str(brew), "upgrade", config.OPS_FORMULA] not in [
         command for command, _ in commands
     ]
+
+
+@pytest.mark.parametrize(
+    ("ops_prefix_output", "ops_prefix_returncode"),
+    [
+        ("relative/ops-prefix\n", 0),
+        ("/first/ops-prefix\n/second/ops-prefix\n", 0),
+        ("", 1),
+    ],
+)
+def test_homebrew_update_fails_closed_for_malformed_or_failed_ops_prefix(
+    monkeypatch,
+    tmp_path,
+    ops_prefix_output,
+    ops_prefix_returncode,
+):
+    brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    commands = []
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(brew))
+    monkeypatch.setattr(
+        config.subprocess,
+        "run",
+        _homebrew_update_runner(
+            commands,
+            brew=brew,
+            cellar=cellar,
+            prefix=prefix,
+            core=core,
+            ops_prefix_output=ops_prefix_output,
+            ops_prefix_returncode=ops_prefix_returncode,
+        ),
+    )
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    executed = [command for command, _ in commands]
+    assert [str(brew), "upgrade", config.OPS_FORMULA] in executed
+    assert [
+        str(core),
+        "start",
+        "--daemon",
+        "--web-apps",
+        "bluearch-aws-ops",
+    ] not in executed
+
+
+def test_homebrew_update_rejects_ops_prefix_outside_exact_cellar(monkeypatch, tmp_path):
+    brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    outside_prefix = tmp_path / "other-cellar" / config.OPS_FORMULA_NAME / "0.13.8"
+    outside_ops = outside_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE
+    outside_ops.parent.mkdir(parents=True)
+    outside_ops.write_text("#!/bin/sh\n", encoding="utf-8")
+    outside_ops.chmod(0o755)
+    commands = []
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(brew))
+    monkeypatch.setattr(
+        config.subprocess,
+        "run",
+        _homebrew_update_runner(
+            commands,
+            brew=brew,
+            cellar=cellar,
+            prefix=prefix,
+            core=core,
+            ops_prefix=outside_prefix.resolve(),
+        ),
+    )
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    executed = [command for command, _ in commands]
+    assert [str(brew), "upgrade", config.OPS_FORMULA] in executed
+    assert [str(core), "start", "--daemon", "--web-apps", "bluearch-aws-ops"] not in executed
+
+
+def test_homebrew_update_rejects_ops_prefix_for_wrong_formula(monkeypatch, tmp_path):
+    brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    wrong_prefix = cellar / "bluearch" / "0.13.8"
+    wrong_ops = wrong_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE
+    wrong_ops.parent.mkdir(parents=True)
+    wrong_ops.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrong_ops.chmod(0o755)
+    commands = []
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(brew))
+    monkeypatch.setattr(
+        config.subprocess,
+        "run",
+        _homebrew_update_runner(
+            commands,
+            brew=brew,
+            cellar=cellar,
+            prefix=prefix,
+            core=core,
+            ops_prefix=wrong_prefix.resolve(),
+        ),
+    )
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    assert [
+        str(core),
+        "start",
+        "--daemon",
+        "--web-apps",
+        "bluearch-aws-ops",
+    ] not in [command for command, _ in commands]
+
+
+def test_homebrew_update_rejects_ops_binary_that_escapes_formula_prefix(
+    monkeypatch, tmp_path
+):
+    brew, cellar, prefix, core = _make_formula_layout(tmp_path)
+    ops = cellar / config.OPS_FORMULA_NAME / "0.13.8" / "bin" / config.PUBLIC_OPS_EXECUTABLE
+    outside = tmp_path / "outside" / config.PUBLIC_OPS_EXECUTABLE
+    outside.parent.mkdir()
+    outside.write_text("#!/bin/sh\n", encoding="utf-8")
+    outside.chmod(0o755)
+    ops.unlink()
+    ops.symlink_to(outside)
+    commands = []
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(brew))
+    monkeypatch.setattr(
+        config.subprocess,
+        "run",
+        _homebrew_update_runner(
+            commands,
+            brew=brew,
+            cellar=cellar,
+            prefix=prefix,
+            core=core,
+        ),
+    )
+
+    assert config._perform_homebrew_update("0.2.6") is False
+    assert [
+        str(core),
+        "start",
+        "--daemon",
+        "--web-apps",
+        "bluearch-aws-ops",
+    ] not in [command for command, _ in commands]
 
 
 def test_homebrew_detection_executes_resolved_exact_public_target(monkeypatch, tmp_path):
