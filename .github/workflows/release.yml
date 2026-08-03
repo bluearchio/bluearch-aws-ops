@@ -251,7 +251,7 @@ jobs:
             "artifacts/$BINARY_NAME-linux-x86_64.tar.gz" \
             "$BINARY_NAME" \
             "${RELEASE_TAG#v}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux-x86_64
           path: artifacts/*
@@ -538,7 +538,7 @@ jobs:
             exit 1
           fi
           test ! -e "$pid_file"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos-arm64
           path: artifacts/*
@@ -587,7 +587,7 @@ jobs:
           output-file: sbom-assets/${{ env.BINARY_NAME }}-macos-arm64.cyclonedx.json
           upload-artifact: false
           upload-release-assets: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-sboms
           path: sbom-assets/*
