@@ -38,6 +38,9 @@ OPS_WEB_PROCESS_SENTINEL = "bluearch-aws-ops-managed-web"
 PID_RECORD_SCHEMA = 2
 LEGACY_PID_RECORD_SCHEMA = 1
 PID_RECORD_PRODUCT = "io.bluearch.aws.ops.web"
+# The only released version whose onefile runtime extracts to a fixed path. Its
+# supervisor is the sole process allowed through the partial-observation path.
+LEGACY_FIXED_NUITKA_VERSION = "0.13.7"
 NUITKA_RUNTIME_DIRECTORY_PATTERN = re.compile(
     rf"^{re.escape(PUBLIC_OPS_EXECUTABLE)}_(\d+)_(\d+)_(\d+)$"
 )
@@ -1062,6 +1065,26 @@ def _homebrew_formula_root(path: Optional[str]) -> Optional[str]:
     return os.sep.join(parts[: cellar_index + 2]) or os.sep
 
 
+def _homebrew_formula_version(path: Optional[str]) -> Optional[str]:
+    """Return the Cellar version component of an exact Ops formula binary."""
+    if _homebrew_formula_root(path) is None:
+        return None
+    parts = os.path.normpath(path).split(os.sep)
+    return parts[parts.index("Cellar") + 2]
+
+
+def _legacy_nuitka_ops_executable() -> str:
+    """The fixed 0.13.7 onefile extraction target."""
+    return os.path.realpath(
+        os.path.join(
+            os.path.expanduser("~"),
+            ".bluearch-aws-ops",
+            "bin",
+            f"{PUBLIC_OPS_EXECUTABLE}.bin",
+        )
+    )
+
+
 def _current_public_ops_target() -> Optional[str]:
     target = _find_cli_executable()
     if target is None or os.path.islink(target):
@@ -1529,6 +1552,151 @@ def _managed_runtime_from_record(
     }
 
 
+def _capture_uninspectable_legacy_supervisor(
+    record: dict,
+    *,
+    target_port: Optional[int] = None,
+) -> Optional[dict]:
+    """Observe a live 0.13.7 supervisor that macOS reports with an empty exe.
+
+    Homebrew removing the old Cellar does not kill the supervisor, but it does
+    make ``psutil.Process.exe()`` return ``""`` instead of raising, so
+    ``_process_snapshot()`` rejects it. Everything else about the process stays
+    stable and is captured here, including the recorded create time that keeps
+    this fail-closed against PID reuse.
+    """
+    pid = record["pid"]
+    if pid <= 1 or pid == os.getpid():
+        return None
+    try:
+        import psutil
+
+        process = psutil.Process(pid)
+        create_time = float(process.create_time())
+        cmdline = tuple(str(part) for part in process.cmdline())
+        executable = process.exe()
+        uid = int(process.uids().effective) if hasattr(process, "uids") else None
+        ppid = int(process.ppid())
+        running = process.is_running()
+    except Exception:
+        return None
+
+    if (
+        not running
+        # An empty exe is the exact deleted-Cellar signature. Anything else means
+        # the executable is still inspectable and belongs on the normal path.
+        or executable != ""
+        or abs(create_time - record["create_time"]) > 0.001
+        or not cmdline
+        or ppid < 0
+        or not _is_exact_packaged_daemon_argv(cmdline, target_port=target_port)
+        or _homebrew_formula_version(cmdline[0]) != LEGACY_FIXED_NUITKA_VERSION
+        # The old launcher must really be gone; a present one is not this case.
+        or os.path.lexists(cmdline[0])
+        or (hasattr(os, "getuid") and uid != os.getuid())
+    ):
+        return None
+
+    port = int(cmdline[6])
+    if target_port is None and port not in MANAGED_DASHBOARD_PORTS:
+        return None
+    return {
+        "pid": pid,
+        "create_time": create_time,
+        "cmdline": cmdline,
+        "uid": uid,
+        "ppid": ppid,
+        "port": port,
+    }
+
+
+def _recaptured_uninspectable_supervisor_matches(
+    observation: dict,
+    *,
+    record: dict,
+) -> bool:
+    """Re-observe every supervisor field immediately before persisting."""
+    current = _capture_uninspectable_legacy_supervisor(
+        record,
+        target_port=observation["port"],
+    )
+    return current == observation
+
+
+def _migrate_uninspectable_legacy_supervisor(
+    observation: dict,
+    *,
+    record: dict,
+    target_port: Optional[int],
+    listener_pids: Optional[set[int]],
+) -> Optional[dict]:
+    """Adopt the one exact 0.13.7 listener whose supervisor lost its exe path.
+
+    Only the listener is persisted and later signaled. The partially observed
+    supervisor is never returned for signaling; it exits once its listener does.
+    """
+    current_formula_root = _homebrew_formula_root(_current_public_ops_target())
+    if (
+        current_formula_root is None
+        or _homebrew_formula_root(observation["cmdline"][0]) != current_formula_root
+    ):
+        return None
+
+    port = observation["port"]
+    legacy_runtime = _legacy_nuitka_ops_executable()
+    candidates = (
+        listener_pids
+        if target_port == port and listener_pids is not None
+        else _listener_pids(port)
+    )
+    matches: list[dict] = []
+    for pid in sorted(candidates):
+        if pid in {observation["pid"], os.getpid()}:
+            continue
+        child = _process_snapshot(pid)
+        if (
+            child is None
+            or child.get("ppid") != observation["pid"]
+            or tuple(child.get("cmdline", ())) != observation["cmdline"]
+            or child.get("uid") != observation["uid"]
+            or not _snapshot_owned_by_current_user(child)
+            # A 0.13.7 supervisor can only own the fixed legacy extraction, never
+            # the per-process temp spec that later versions use.
+            or os.path.realpath(str(child.get("executable", ""))) != legacy_runtime
+            or not _is_nuitka_listener_snapshot(
+                child,
+                target_port=port,
+                require_current_launcher=False,
+                expected_supervisor_pid=observation["pid"],
+            )
+        ):
+            continue
+        matches.append(child)
+
+    if len(matches) != 1:
+        return None
+    listener = matches[0]
+    if (
+        not _probe_ops_health(port)
+        or not _recaptured_snapshot_matches(listener)
+        or not _recaptured_uninspectable_supervisor_matches(observation, record=record)
+        or _read_pid_record() != record
+    ):
+        return None
+
+    _write_pid(
+        listener["pid"],
+        snapshot=listener,
+        supervisor=None,
+        allow_missing_paths=True,
+    )
+    return {
+        "listener": listener,
+        "listener_identity": _identity_from_snapshot(listener),
+        "supervisor": None,
+    }
+
+
 def _migrate_legacy_pid_record(
     record: dict,
     *,
@@ -1537,9 +1705,25 @@ def _migrate_legacy_pid_record(
 ) -> Optional[dict]:
     """Migrate the 0.13.7 supervisor-only record after proving its listener."""
     recorded = _process_snapshot(record["pid"])
+    if recorded is None:
+        # The supervisor may still be alive but uninspectable after its Cellar
+        # was deleted. Preserve the record and try the narrow partial path.
+        if not _is_process_alive(record["pid"]):
+            return None
+        observation = _capture_uninspectable_legacy_supervisor(
+            record,
+            target_port=target_port,
+        )
+        if observation is None:
+            return None
+        return _migrate_uninspectable_legacy_supervisor(
+            observation,
+            record=record,
+            target_port=target_port,
+            listener_pids=listener_pids,
+        )
     if (
-        recorded is None
-        or abs(recorded["create_time"] - record["create_time"]) > 0.001
+        abs(recorded["create_time"] - record["create_time"]) > 0.001
         or not _snapshot_is_public_ops_web(recorded)
         or not _recaptured_snapshot_matches(recorded)
     ):

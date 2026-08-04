@@ -27,7 +27,7 @@ def test_version_is_one_exact_machine_readable_public_identity():
     )
 
     assert result.exit_code == 0
-    assert result.output == "bluearch-aws-ops 0.13.8\n"
+    assert result.output == "bluearch-aws-ops 0.13.9\n"
 
 
 def test_web_help_hides_the_core_managed_start_command():

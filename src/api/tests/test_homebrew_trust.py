@@ -11,7 +11,7 @@ def _make_formula_layout(tmp_path, version="0.2.6"):
     cellar = homebrew / "Cellar"
     prefix = cellar / "bluearch-aws-core" / version
     core = prefix / "bin" / "bluearch-aws-core"
-    ops_prefix = cellar / "bluearch-aws-ops" / "0.13.8"
+    ops_prefix = cellar / "bluearch-aws-ops" / "0.13.9"
     ops = ops_prefix / "bin" / "bluearch-aws-ops"
     brew.parent.mkdir(parents=True)
     core.parent.mkdir(parents=True)
@@ -40,7 +40,7 @@ def _homebrew_update_runner(
     ops_prefix_output=None,
     ops_prefix_returncode=0,
 ):
-    ops_prefix = ops_prefix or cellar / config.OPS_FORMULA_NAME / "0.13.8"
+    ops_prefix = ops_prefix or cellar / config.OPS_FORMULA_NAME / "0.13.9"
 
     def run(command, **kwargs):
         commands.append((command, kwargs))
@@ -178,7 +178,7 @@ def test_homebrew_update_trusts_both_formulas_and_verifies_formula_core_before_o
     monkeypatch, tmp_path
 ):
     brew, cellar, prefix, core = _make_formula_layout(tmp_path)
-    ops_prefix = cellar / config.OPS_FORMULA_NAME / "0.13.8"
+    ops_prefix = cellar / config.OPS_FORMULA_NAME / "0.13.9"
     ops = (ops_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE).resolve()
     commands = []
     fake_override = tmp_path / "fake" / "bluearch-aws-core"
@@ -529,7 +529,7 @@ def test_homebrew_update_fails_closed_for_malformed_or_failed_ops_prefix(
 
 def test_homebrew_update_rejects_ops_prefix_outside_exact_cellar(monkeypatch, tmp_path):
     brew, cellar, prefix, core = _make_formula_layout(tmp_path)
-    outside_prefix = tmp_path / "other-cellar" / config.OPS_FORMULA_NAME / "0.13.8"
+    outside_prefix = tmp_path / "other-cellar" / config.OPS_FORMULA_NAME / "0.13.9"
     outside_ops = outside_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE
     outside_ops.parent.mkdir(parents=True)
     outside_ops.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -557,7 +557,7 @@ def test_homebrew_update_rejects_ops_prefix_outside_exact_cellar(monkeypatch, tm
 
 def test_homebrew_update_rejects_ops_prefix_for_wrong_formula(monkeypatch, tmp_path):
     brew, cellar, prefix, core = _make_formula_layout(tmp_path)
-    wrong_prefix = cellar / "bluearch" / "0.13.8"
+    wrong_prefix = cellar / "bluearch" / "0.13.9"
     wrong_ops = wrong_prefix / "bin" / config.PUBLIC_OPS_EXECUTABLE
     wrong_ops.parent.mkdir(parents=True)
     wrong_ops.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -591,7 +591,7 @@ def test_homebrew_update_rejects_ops_binary_that_escapes_formula_prefix(
     monkeypatch, tmp_path
 ):
     brew, cellar, prefix, core = _make_formula_layout(tmp_path)
-    ops = cellar / config.OPS_FORMULA_NAME / "0.13.8" / "bin" / config.PUBLIC_OPS_EXECUTABLE
+    ops = cellar / config.OPS_FORMULA_NAME / "0.13.9" / "bin" / config.PUBLIC_OPS_EXECUTABLE
     outside = tmp_path / "outside" / config.PUBLIC_OPS_EXECUTABLE
     outside.parent.mkdir()
     outside.write_text("#!/bin/sh\n", encoding="utf-8")
