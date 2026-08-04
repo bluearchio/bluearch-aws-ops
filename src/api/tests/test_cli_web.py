@@ -330,11 +330,11 @@ def test_listener_discovery_signals_exact_public_ops_process(monkeypatch):
             "pid": pid,
             "create_time": 20.0,
             "cmdline": (
-                "/opt/homebrew/Cellar/bluearch-aws-ops/0.13.8/bin/bluearch-aws-ops",
+                "/opt/homebrew/Cellar/bluearch-aws-ops/0.13.9/bin/bluearch-aws-ops",
                 "web", "start", "--host", "127.0.0.1", "--port", "8095",
                 "--log-level", "info", "--no-browser",
             ),
-            "executable": "/opt/homebrew/Cellar/bluearch-aws-ops/0.13.8/bin/bluearch-aws-ops",
+            "executable": "/opt/homebrew/Cellar/bluearch-aws-ops/0.13.9/bin/bluearch-aws-ops",
             "uid": os.getuid(),
             "ppid": 1,
         },
@@ -388,7 +388,7 @@ def test_public_ops_identity_accepts_exact_unique_nuitka_listener(
     runtime.parent.mkdir(parents=True)
     runtime.write_text("#!/bin/sh\n")
     runtime.chmod(0o755)
-    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.8" / "bin" / "bluearch-aws-ops"
+    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.9" / "bin" / "bluearch-aws-ops"
     monkeypatch.setattr(web.tempfile, "gettempdir", lambda: str(runtime_tmp))
     snapshot = {
         "pid": 41002,
@@ -610,6 +610,309 @@ def test_legacy_supervisor_record_migrates_to_listener_and_supervisor_identities
     assert (pid_file.stat().st_mode & 0o777) == 0o600
 
 
+class _UninspectableSupervisor:
+    """A live 0.13.7 supervisor whose deleted Cellar leaves exe() empty."""
+
+    def __init__(self, pid, create_time, cmdline, *, executable="", uid=None, ppid=1):
+        self.pid = pid
+        self._create_time = create_time
+        self._cmdline = list(cmdline)
+        self._executable = executable
+        self._uid = os.getuid() if uid is None else uid
+        self._ppid = ppid
+        self.terminate_calls = 0
+        self.kill_calls = 0
+
+    def create_time(self):
+        return self._create_time
+
+    def cmdline(self):
+        return list(self._cmdline)
+
+    def exe(self):
+        return self._executable
+
+    def uids(self):
+        class _Uids:
+            real = effective = self._uid
+
+        return _Uids()
+
+    def ppid(self):
+        return self._ppid
+
+    def is_running(self):
+        return True
+
+    def status(self):
+        return "running"
+
+    def terminate(self):
+        self.terminate_calls += 1
+
+    def kill(self):
+        self.kill_calls += 1
+
+
+def _deleted_cellar_fixture(monkeypatch, tmp_path, *, legacy_version="0.13.7"):
+    """Build the exact post-Cellar-deletion 0.13.7 handoff state."""
+    state_dir = tmp_path / "runtime-state"
+    state_dir.mkdir(mode=0o700)
+    pid_file = state_dir / "web-server.pid"
+    monkeypatch.setattr(web, "PID_DIR", str(state_dir))
+    monkeypatch.setattr(web, "PID_FILE", str(pid_file))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cellar = tmp_path / "Cellar" / "bluearch-aws-ops"
+    deleted_launcher = cellar / legacy_version / "bin" / "bluearch-aws-ops"
+    current_launcher = cellar / "0.13.9" / "bin" / "bluearch-aws-ops"
+    current_launcher.parent.mkdir(parents=True)
+    current_launcher.write_text("#!/bin/sh\n")
+    current_launcher.chmod(0o755)
+
+    runtime = tmp_path / ".bluearch-aws-ops" / "bin" / "bluearch-aws-ops.bin"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("#!/bin/sh\n")
+    runtime.chmod(0o755)
+
+    argv = (
+        str(deleted_launcher), "web", "start", "--host", "127.0.0.1",
+        "--port", "8095", "--log-level", "info", "--no-browser",
+    )
+    pid_file.write_text(
+        '{"command":"bluearch-aws-ops","create_time":100.0,"pid":41001,"schema":1}\n'
+    )
+    pid_file.chmod(0o600)
+
+    listener = {
+        "pid": 41002,
+        "create_time": 101.0,
+        "cmdline": argv,
+        "executable": str(runtime),
+        "uid": os.getuid(),
+        "ppid": 41001,
+    }
+    monkeypatch.setattr(web, "_current_public_ops_target", lambda: str(current_launcher))
+    monkeypatch.setattr(web, "_probe_ops_health", lambda port: port == 8095)
+    return {
+        "pid_file": pid_file,
+        "argv": argv,
+        "runtime": runtime,
+        "deleted_launcher": deleted_launcher,
+        "listener": listener,
+    }
+
+
+def test_deleted_cellar_migrates_exact_legacy_listener_without_signaling_supervisor(
+    monkeypatch, tmp_path
+):
+    """The uninspectable 0.13.7 supervisor hands off to its proven listener."""
+    import psutil
+
+    fixture = _deleted_cellar_fixture(monkeypatch, tmp_path)
+    listener = fixture["listener"]
+    supervisor = _UninspectableSupervisor(41001, 100.0, fixture["argv"])
+
+    monkeypatch.setattr(web, "_process_snapshot", lambda pid: listener if pid == 41002 else None)
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: pid == 41001)
+    monkeypatch.setattr(web, "_listener_pids", lambda port: {41002} if port == 8095 else set())
+    monkeypatch.setattr(web, "_recaptured_snapshot_matches", lambda snapshot: True)
+    monkeypatch.setattr(
+        psutil, "Process", lambda pid: supervisor if pid == 41001 else None
+    )
+
+    managed = web._managed_runtime_from_record(
+        web._read_pid_record(), target_port=8095, listener_pids={41002}
+    )
+
+    assert managed is not None
+    assert managed["listener"]["pid"] == 41002
+    # The partially observed supervisor must never be offered for signaling.
+    assert managed["supervisor"] is None
+
+    migrated = web._read_pid_record()
+    assert migrated["schema"] == web.PID_RECORD_SCHEMA
+    assert migrated["listener"]["pid"] == 41002
+    assert migrated["supervisor"] is None
+    assert (fixture["pid_file"].stat().st_mode & 0o777) == 0o600
+
+    stopped = []
+    monkeypatch.setattr(
+        web, "_terminate_process", lambda pid, *a, **k: stopped.append(pid) or True
+    )
+    assert web._terminate_managed_runtime(managed) == [41002]
+    assert stopped == [41002]
+    assert supervisor.terminate_calls == 0
+    assert supervisor.kill_calls == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "wrong-parent",
+        "wrong-uid",
+        "listener-cmdline-mismatch",
+        "wrong-runtime",
+        "wrong-root",
+        "wrong-legacy-version",
+        "old-launcher-present",
+        "supervisor-exe-present",
+        "create-time-mismatch",
+        "multiple-listeners",
+        "unhealthy",
+    ),
+)
+def test_deleted_cellar_recovery_rejects_ambiguous_or_untrusted_state(
+    monkeypatch, tmp_path, mutation
+):
+    """Every untrusted variant fails closed, preserving the legacy record."""
+    import psutil
+
+    legacy_version = "0.13.6" if mutation == "wrong-legacy-version" else "0.13.7"
+    fixture = _deleted_cellar_fixture(monkeypatch, tmp_path, legacy_version=legacy_version)
+    argv = fixture["argv"]
+    listener = dict(fixture["listener"])
+
+    if mutation == "old-launcher-present":
+        fixture["deleted_launcher"].parent.mkdir(parents=True)
+        fixture["deleted_launcher"].write_text("#!/bin/sh\n")
+        fixture["deleted_launcher"].chmod(0o755)
+    if mutation == "wrong-parent":
+        listener["ppid"] = 49999
+    if mutation == "wrong-uid":
+        listener["uid"] = os.getuid() + 1
+    if mutation == "listener-cmdline-mismatch":
+        # Still an exact daemon argv for port 8095, so only the supervisor/listener
+        # cmdline equality check can reject it.
+        listener["cmdline"] = argv[:8] + ("debug",) + argv[9:]
+    if mutation == "wrong-runtime":
+        # A per-process temp extraction is otherwise a valid Ops runtime, but a
+        # 0.13.7 supervisor can only ever own the fixed legacy extraction.
+        fake_tmp = tmp_path / "tmproot"
+        fake_tmp.mkdir()
+        monkeypatch.setattr(web.tempfile, "gettempdir", lambda: str(fake_tmp))
+        other = fake_tmp / "bluearch-aws-ops_41001_123_456" / "bluearch-aws-ops.bin"
+        other.parent.mkdir(parents=True)
+        other.write_text("#!/bin/sh\n")
+        other.chmod(0o755)
+        listener["executable"] = str(other)
+    if mutation == "wrong-root":
+        other_launcher = (
+            tmp_path / "other-cellar" / "Cellar" / "bluearch-aws-ops"
+            / "0.13.9" / "bin" / "bluearch-aws-ops"
+        )
+        other_launcher.parent.mkdir(parents=True)
+        other_launcher.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(web, "_current_public_ops_target", lambda: str(other_launcher))
+    if mutation == "unhealthy":
+        monkeypatch.setattr(web, "_probe_ops_health", lambda port: False)
+
+    supervisor = _UninspectableSupervisor(
+        41001,
+        105.0 if mutation == "create-time-mismatch" else 100.0,
+        argv,
+        executable=(
+            str(fixture["deleted_launcher"]) if mutation == "supervisor-exe-present" else ""
+        ),
+    )
+
+    snapshots = {41002: listener}
+    listener_pids = {41002}
+    if mutation == "multiple-listeners":
+        twin = dict(listener)
+        twin["pid"] = 41003
+        twin["create_time"] = 102.0
+        snapshots[41003] = twin
+        listener_pids.add(41003)
+
+    monkeypatch.setattr(web, "_process_snapshot", lambda pid: snapshots.get(pid))
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: pid == 41001)
+    monkeypatch.setattr(
+        web, "_listener_pids", lambda port: set(listener_pids) if port == 8095 else set()
+    )
+    monkeypatch.setattr(web, "_recaptured_snapshot_matches", lambda snapshot: True)
+    monkeypatch.setattr(
+        psutil, "Process", lambda pid: supervisor if pid == 41001 else None
+    )
+
+    managed = web._managed_runtime_from_record(
+        web._read_pid_record(), target_port=8095, listener_pids=set(listener_pids)
+    )
+
+    assert managed is None
+    # The legacy record must survive so a later, provable attempt can migrate it.
+    preserved = web._read_pid_record()
+    assert preserved["schema"] == web.LEGACY_PID_RECORD_SCHEMA
+    assert preserved["pid"] == 41001
+    assert supervisor.terminate_calls == 0
+    assert supervisor.kill_calls == 0
+
+
+@pytest.mark.parametrize("field", ("create_time", "cmdline", "uid", "exe"))
+def test_deleted_cellar_recovery_rejects_supervisor_change_before_persist(
+    monkeypatch, tmp_path, field
+):
+    """A supervisor that changes between observation and persist is rejected."""
+    import psutil
+
+    fixture = _deleted_cellar_fixture(monkeypatch, tmp_path)
+    listener = fixture["listener"]
+    argv = fixture["argv"]
+    supervisor = _UninspectableSupervisor(41001, 100.0, argv)
+
+    calls = {"n": 0}
+
+    def mutating_process(pid):
+        if pid != 41001:
+            return None
+        calls["n"] += 1
+        # The first observation is clean; the recapture sees a changed process.
+        if calls["n"] > 1:
+            if field == "create_time":
+                supervisor._create_time = 100.5
+            elif field == "cmdline":
+                supervisor._cmdline = list(argv[:6] + ("8096",) + argv[7:])
+            elif field == "uid":
+                supervisor._uid = os.getuid() + 1
+            elif field == "exe":
+                supervisor._executable = str(fixture["deleted_launcher"])
+        return supervisor
+
+    monkeypatch.setattr(web, "_process_snapshot", lambda pid: listener if pid == 41002 else None)
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: pid == 41001)
+    monkeypatch.setattr(web, "_listener_pids", lambda port: {41002} if port == 8095 else set())
+    monkeypatch.setattr(web, "_recaptured_snapshot_matches", lambda snapshot: True)
+    monkeypatch.setattr(psutil, "Process", mutating_process)
+
+    managed = web._managed_runtime_from_record(
+        web._read_pid_record(), target_port=8095, listener_pids={41002}
+    )
+
+    assert managed is None
+    assert web._read_pid_record()["schema"] == web.LEGACY_PID_RECORD_SCHEMA
+    assert supervisor.terminate_calls == 0
+    assert supervisor.kill_calls == 0
+
+
+def test_legacy_record_survives_while_uninspectable_supervisor_is_alive(
+    monkeypatch, tmp_path
+):
+    """State is deleted only once the legacy supervisor is truly gone."""
+    fixture = _deleted_cellar_fixture(monkeypatch, tmp_path)
+    record = web._read_pid_record()
+
+    monkeypatch.setattr(web, "_listener_pids", lambda port: set())
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: pid == 41001)
+    assert web._record_processes_are_gone(record) is False
+    web._remove_stale_pid_files()
+    assert fixture["pid_file"].exists()
+
+    monkeypatch.setattr(web, "_is_process_alive", lambda pid: False)
+    assert web._record_processes_are_gone(record) is True
+    web._remove_stale_pid_files()
+    assert not fixture["pid_file"].exists()
+
+
 def test_packaged_spawn_resolves_unique_nuitka_listener_child(monkeypatch, tmp_path):
     runtime_tmp = tmp_path / "runtime-tmp"
     runtime = (
@@ -620,7 +923,7 @@ def test_packaged_spawn_resolves_unique_nuitka_listener_child(monkeypatch, tmp_p
     runtime.parent.mkdir(parents=True)
     runtime.write_text("#!/bin/sh\n")
     runtime.chmod(0o755)
-    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.8" / "bin" / "bluearch-aws-ops"
+    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.9" / "bin" / "bluearch-aws-ops"
     launcher.parent.mkdir(parents=True)
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
@@ -669,7 +972,7 @@ def test_failed_spawn_recovers_reparented_unique_listener_without_health(
     runtime.parent.mkdir(parents=True)
     runtime.write_text("#!/bin/sh\n")
     runtime.chmod(0o755)
-    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.8" / "bin" / "bluearch-aws-ops"
+    launcher = tmp_path / "Cellar" / "bluearch-aws-ops" / "0.13.9" / "bin" / "bluearch-aws-ops"
     argv = (
         str(launcher), "web", "start", "--host", "127.0.0.1",
         "--port", "8095", "--log-level", "info", "--no-browser",

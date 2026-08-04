@@ -391,8 +391,35 @@ jobs:
           new_listener_pid=""
           fake_core_pid=""
 
+          dump_brownfield_diagnostics() {
+            local pid listener_pids schema
+            echo "::group::Brownfield runtime diagnostics"
+            echo "old_supervisor_pid=${old_supervisor_pid:-unset} old_listener_pid=${old_listener_pid:-unset}"
+            echo "new_supervisor_pid=${new_supervisor_pid:-unset} new_listener_pid=${new_listener_pid:-unset}"
+            for pid in "$new_listener_pid" "$new_supervisor_pid" "$old_listener_pid" "$old_supervisor_pid"; do
+              [[ "$pid" =~ ^[0-9]+$ ]] || continue
+              ps -p "$pid" -o pid=,ppid=,uid=,state=,comm= || true
+            done
+            listener_pids="$(lsof -nP -iTCP:8095 -sTCP:LISTEN -t 2>/dev/null || true)"
+            echo "port_8095_listener_pids=${listener_pids:-none}"
+            listener_pids="$(lsof -nP -iTCP:28094 -sTCP:LISTEN -t 2>/dev/null || true)"
+            echo "port_28094_listener_pids=${listener_pids:-none}"
+            if [[ -e "$pid_file" ]]; then
+              echo "pid_state=present"
+              # The schema alone tells us whether the legacy record migrated.
+              schema="$(PID_FILE="$pid_file" python3 -c 'import json, os; print(json.load(open(os.environ["PID_FILE"], encoding="utf-8"))["schema"])' 2>/dev/null || true)"
+              echo "pid_record_schema=${schema:-unreadable}"
+            else
+              echo "pid_state=absent"
+            fi
+            echo "::endgroup::"
+          }
+
           cleanup() {
-            local pid command
+            local status="$?" pid command
+            if (( status != 0 )); then
+              dump_brownfield_diagnostics
+            fi
             for pid in "$new_listener_pid" "$new_supervisor_pid" "$old_listener_pid" "$old_supervisor_pid"; do
               [[ "$pid" =~ ^[0-9]+$ ]] || continue
               command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
@@ -406,6 +433,7 @@ jobs:
               fi
             fi
             rm -rf "$brownfield_dir"
+            return "$status"
           }
           trap cleanup EXIT
 
